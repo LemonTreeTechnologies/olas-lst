@@ -541,9 +541,28 @@ contract ExternalStakingDistributor is Implementation, ERC721TokenReceiver {
             revert ZeroValue();
         }
 
-        // Sanity check
-        if (agentId == 0 || configHash == 0) {
+        // Check for zero value
+        if (configHash == 0) {
             revert ZeroValue();
+        }
+
+        // Check for agent Id
+        if (agentId == 0) {
+            // If zero - fetch it from stakingProxy
+            uint256[] memory agentIds = IStaking(stakingProxy).agentIds();
+
+            // Check for length
+            if (agentIds.length == 0) {
+                revert ZeroValue();
+            }
+
+            // Assign agent Id
+            agentId = agentIds[0];
+
+            // This must never happen if staking proxy is setup correctly
+            if (agentId == 0) {
+                revert ZeroValue();
+            }
         }
 
         // Get current unstaked balance

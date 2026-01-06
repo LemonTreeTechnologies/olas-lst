@@ -171,7 +171,7 @@ contract Depository is Implementation {
     // Mapping for account => withdraw amounts
     mapping(address => uint256) public mapAccountWithdraws;
 
-    // Mapping for chain Id => (amount deposited : address of staked external)
+    // Mapping for chain Id => (amount deposited | address of external staking distributor)
     mapping(uint256 => uint256) public mapChainIdStakedExternals;
 
     /// @dev Depository constructor.
@@ -905,9 +905,16 @@ contract Depository is Implementation {
         uint256[] memory localStakedExternals = new uint256[](chainIds.length);
         uint256 totalAmount;
 
+        uint256 lastChainId;
         // Traverse all chain Ids
         for (uint256 i = 0; i < chainIds.length; ++i) {
-            // TODO check chain Ids for increasing order
+            // Check chain Ids for increasing order
+            if (lastChainId >= chainIds[i]) {
+                revert Overflow(lastChainId, chainIds[i]);
+            }
+            lastChainId = chainIds[i];
+
+            // Get external staking distributor data: (amount deposited | address of external staking distributor)
             uint256 stakedExternal = mapChainIdStakedExternals[chainIds[i]];
             (localStakedExternals[i], externalStakingDistributors[i]) =
             ((stakedExternal >> 160), address(uint160(stakedExternal)));
@@ -994,9 +1001,16 @@ contract Depository is Implementation {
 
         uint256 unstakeAmount;
 
+        uint256 lastChainId;
         // Traverse all chain Ids
         for (uint256 i = 0; i < chainIds.length; ++i) {
-            // TODO check chain Ids for increasing order
+            // Check chain Ids for increasing order
+            if (lastChainId >= chainIds[i]) {
+                revert Overflow(lastChainId, chainIds[i]);
+            }
+            lastChainId = chainIds[i];
+
+            // Get external staking distributor data: (amount deposited | address of external staking distributor)
             uint256 stakedExternal = mapChainIdStakedExternals[chainIds[i]];
             (localStakedExternals[i], externalStakingDistributors[i]) =
             ((stakedExternal >> 160), address(uint160(stakedExternal)));
@@ -1006,7 +1020,6 @@ contract Depository is Implementation {
                 revert ZeroAddress();
             }
 
-            // TODO Change for auto calculation? It seems better to exactly specify amounts as it can be figured out offchain
             // Check for allowed L2 deposits
             if (amounts[i] > localStakedExternals[i]) {
                 revert Overflow(amounts[i], localStakedExternals[i]);
