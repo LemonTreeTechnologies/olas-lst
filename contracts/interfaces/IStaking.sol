@@ -9,7 +9,7 @@ interface IStaking {
     }
 
     /// @dev Gets set of agent Ids.
-    function agentIds() external view returns (uint256[] memory);
+    function getAgentIds() external view returns (uint256[] memory);
 
     /// @dev Gets service staking token.
     /// @return Service staking token address.

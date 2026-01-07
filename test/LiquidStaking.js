@@ -1733,7 +1733,7 @@ describe("Liquid Staking", function () {
                 livenessPeriod: 10, // Ten seconds
                 timeForEmissions: 100,
                 numAgentInstances: 1,
-                agentIds: [],
+                agentIds,
                 threshold: 0,
                 configHash: HashZero,
                 proxyHash: bytecodeHash,
@@ -1783,7 +1783,8 @@ describe("Liquid Staking", function () {
 
             // Stake services - create new ones with serviceId == 0
             let agentInstanceAddressV1 = signers[1].address;
-            await externalStakingDistributor.stake(externalStakingTokenAddressV1, 0, agentId, defaultHash, agentInstanceAddressV1);
+            // agentId == 0 and will be fetched from stakingProxy
+            await externalStakingDistributor.stake(externalStakingTokenAddressV1, 0, 0, defaultHash, agentInstanceAddressV1);
             let agentInstanceAddressV2 = signers[2].address;
             await externalStakingDistributor.stake(externalStakingTokenAddressV2, 0, agentId, defaultHash, agentInstanceAddressV2);
 

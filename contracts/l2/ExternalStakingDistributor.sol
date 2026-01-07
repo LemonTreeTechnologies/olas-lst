@@ -549,7 +549,7 @@ contract ExternalStakingDistributor is Implementation, ERC721TokenReceiver {
         // Check for agent Id
         if (agentId == 0) {
             // If zero - fetch it from stakingProxy
-            uint256[] memory agentIds = IStaking(stakingProxy).agentIds();
+            uint256[] memory agentIds = IStaking(stakingProxy).getAgentIds();
 
             // Check for length
             if (agentIds.length == 0) {
