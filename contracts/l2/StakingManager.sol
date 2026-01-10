@@ -430,7 +430,7 @@ contract StakingManager is Implementation, ERC721TokenReceiver {
         } else {
             // This must never happen except for unlikely cases where L2 staking setup does not correspond L1 numbers,
             // or when stake failed and now symmetrical unstakes take place
-            if (mapStakedServiceIds[stakingProxy].length == 0) {
+            if (mapLastStakedServiceIdxs[stakingProxy] == 0) {
                 // Get amount - balance difference
                 uint256 amountDiff = amount - balance;
                 // Amount becomes balance
