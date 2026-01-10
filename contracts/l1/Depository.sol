@@ -286,7 +286,7 @@ contract Depository is Implementation {
             if (amounts[i] == 0) continue;
 
             // Add to total sum values
-            totalSumValues += amounts[i];
+            totalSumValues += values[i];
 
             // Get corresponding deposit processor
             address depositProcessor = mapChainIdDepositProcessors[chainIds[i]];
