@@ -10,6 +10,13 @@ interface IToken {
     /// @param amount Token amount.
     /// @return True if the function execution is successful.
     function approve(address spender, uint256 amount) external returns (bool);
+
+    /// @dev Transfers the token amount that was previously approved up until the maximum allowance.
+    /// @param from Account address to transfer from.
+    /// @param to Account address to transfer to.
+    /// @param amount Amount to transfer to.
+    /// @return True if the function execution is successful.
+    function transferFrom(address from, address to, uint256 amount) external returns (bool);
 }
 
 interface IBridge {
@@ -76,7 +83,11 @@ contract GnosisStakingProcessorL2 is DefaultStakingProcessorL2 {
             revert ZeroValueOnly();
         }
 
+        // Get tokens
+        IToken(olas).transferFrom(msg.sender, address(this), olasAmount);
+        // Approve for bridging
         IToken(olas).approve(l2TokenRelayer, olasAmount);
+        // Bridge tokens
         IBridge(l2TokenRelayer).relayTokens(olas, to, olasAmount);
     }
 }

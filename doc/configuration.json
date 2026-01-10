@@ -112,7 +112,7 @@
       {
         "name": "StakingTokenLocked",
         "artifact": "abis/0.8.30/StakingTokenLocked.json",
-        "address": "0xA8e739a8A5D56b9ccF612020204B9C90A1b55099"
+        "address": "0x9fFC6B45568Dfb1A6a0d9577c6985B4B7cD46701"
       },
       {
         "name": "ModuleActivityChecker",
@@ -122,7 +122,7 @@
       {
         "name": "StakingHelper",
         "artifact": "abis/0.8.30/StakingHelper.json",
-        "address": "0x371f3Fd9f19298043DF60d2858719073EcFAc688"
+        "address": "0x76097aAeD1FA84e645E8AC71160542347476404D"
       }
     ]
   }
