@@ -94,6 +94,10 @@ interface ISafe {
     /// @param oldOwner Owner address to be replaced.
     /// @param newOwner New owner address.
     function swapOwner(address prevOwner, address oldOwner, address newOwner) external;
+
+    /// @dev Sets guard that checks transactions before and after execution.
+    /// @param guard Guard address.
+    function setGuard(address guard) external;
 }
 
 // SafeMultisigWithRecoveryModule interface
@@ -148,6 +152,7 @@ contract ExternalStakingDistributor is Implementation, ERC721TokenReceiver {
     }
 
     event StakingProcessorL2Updated(address indexed l2StakingProcessor);
+    event MultisigGuardUpdated(address indexed guard);
     event ExternalServiceStaked(
         address indexed sender,
         address indexed stakingProxy,
@@ -216,6 +221,8 @@ contract ExternalStakingDistributor is Implementation, ERC721TokenReceiver {
     uint256 public stakedBalance;
     // L2 staking processor address
     address public l2StakingProcessor;
+    // Multisig guard address
+    address public guard;
 
     // Nonce
     uint256 internal _nonce;
@@ -230,8 +237,12 @@ contract ExternalStakingDistributor is Implementation, ERC721TokenReceiver {
     mapping(bytes32 => uint256) public mapUnstakeOperationRequestedAmounts;
     // Mapping of service Id => agent address curating it
     mapping(uint256 => address) public mapServiceIdCuratingAgents;
+    // Mapping whitelisted curating agent addresses
+    mapping(address => bool) public mapCuratingAgents;
     // Mapping of whitelisted managing agent addresses
     mapping(address => bool) public mapManagingAgents;
+    // Mapping of multisig address => service Id
+    mapping(address => uint256) public mapMultisigServiceIds;
 
     /// @dev ExternalStakingDistributor constructor.
     /// @param _olas OLAS token address.
@@ -280,21 +291,38 @@ contract ExternalStakingDistributor is Implementation, ERC721TokenReceiver {
         owner = msg.sender;
     }
 
-    /// @dev Changes token relayer address.
-    /// @param newStakingProcessorL2 Address of a new owner.
+    /// @dev Changes staking processor L2 address.
+    /// @param newStakingProcessorL2 New staking processor L2 address.
     function changeStakingProcessorL2(address newStakingProcessorL2) external {
         // Check for ownership
         if (msg.sender != owner) {
             revert OwnerOnly(msg.sender, owner);
         }
 
-        // Check for the zero address
+        // Check for zero address
         if (newStakingProcessorL2 == address(0)) {
             revert ZeroAddress();
         }
 
         l2StakingProcessor = newStakingProcessorL2;
         emit StakingProcessorL2Updated(newStakingProcessorL2);
+    }
+
+    /// @dev Changes multisig guard address.
+    /// @param newGuard New multisig guard address.
+    function changeMultisigGuard(address newGuard) external {
+        // Check for ownership
+        if (msg.sender != owner) {
+            revert OwnerOnly(msg.sender, owner);
+        }
+
+        // Check for zero address
+        if (newGuard == address(0)) {
+            revert ZeroAddress();
+        }
+
+        guard = newGuard;
+        emit MultisigGuardUpdated(newGuard);
     }
 
     /// @dev Creates multisig and enables address(this) as module.
@@ -318,10 +346,20 @@ contract ExternalStakingDistributor is Implementation, ERC721TokenReceiver {
         bytes32 r = bytes32(uint256(uint160(address(this))));
         bytes memory signature = abi.encodePacked(r, bytes32(0), uint8(1));
 
-        // Encode enable module function call
+        // Encode enable module (external staking distributor) function call
         data = abi.encodeCall(ISafe.enableModule, (address(this)));
         // MultiSend payload with the packed data of (operation, multisig address, value(0), payload length, payload)
         bytes memory msPayload = abi.encodePacked(ISafe.Operation.Call, multisig, uint256(0), data.length, data);
+
+        // Encode enable module (guard) function call
+        data = abi.encodeCall(ISafe.enableModule, (guard));
+        // MultiSend payload with the packed data of (operation, multisig address, value(0), payload length, payload)
+        msPayload = abi.encodePacked(ISafe.Operation.Call, multisig, uint256(0), data.length, data);
+
+        // Encode set guard function call
+        data = abi.encodeCall(ISafe.setGuard, (guard));
+        // MultiSend payload with the packed data of (operation, multisig address, value(0), payload length, payload)
+        msPayload = abi.encodePacked(ISafe.Operation.Call, multisig, uint256(0), data.length, data);
 
         // Encode swap owner function call
         data = abi.encodeCall(ISafe.swapOwner, (address(0x1), address(this), agentInstance));
@@ -402,6 +440,9 @@ contract ExternalStakingDistributor is Implementation, ERC721TokenReceiver {
         if (createService) {
             // Create multisig with address(this) as module and swap owners to agentInstance
             multisig = _createMultisigWithSelfAsModule(agentInstance);
+
+            // Link mutlsig and service Id
+            mapMultisigServiceIds[multisig] = serviceId;
 
             // Deploy service via same address multisig
             IService(serviceManager).deploy(serviceId, safeSameAddressMultisig, abi.encodePacked(multisig));

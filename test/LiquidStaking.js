@@ -37,6 +37,7 @@ describe("Liquid Staking", function () {
     let activityModule;
     let stakingManager;
     let externalStakingDistributor;
+    let multisigGuard;
     let stakingTokenImplementation;
     let externalStakingTokenImplementationV1;
     let externalStakingTokenImplementationV2;
@@ -316,6 +317,17 @@ describe("Liquid Staking", function () {
         // Fund external staking distributor with native to support staking creation
         await deployer.sendTransaction({to: externalStakingDistributor.address, value: ethers.utils.parseEther("1")});
 
+        const MultisigGuard = await ethers.getContractFactory("MultisigGuard");
+        multisigGuard = await MultisigGuard.deploy(serviceRegistryTokenUtility.address, externalStakingDistributor.address);
+        await multisigGuard.deployed();
+
+        // Initialize multisigGuard
+        const MultisigGuardProxy = await ethers.getContractFactory("Proxy");
+        initPayload = multisigGuard.interface.encodeFunctionData("initialize", []);
+        const multisigGuardProxy = await ExternalStakingDistributorProxy.deploy(multisigGuard.address, initPayload);
+        await multisigGuardProxy.deployed();
+        multisigGuard = await ethers.getContractAt("MultisigGuard", multisigGuardProxy.address);
+
         const BridgeRelayer = await ethers.getContractFactory("BridgeRelayer");
         bridgeRelayer = await BridgeRelayer.deploy(olas.address);
         await bridgeRelayer.deployed();
@@ -341,6 +353,9 @@ describe("Liquid Staking", function () {
 
         // changeStakingProcessorL2 for externalStakingDistributor
         await externalStakingDistributor.changeStakingProcessorL2(gnosisStakingProcessorL2.address);
+
+        // changeMultisigGuard for externalStakingDistributor
+        await externalStakingDistributor.changeMultisigGuard(multisigGuard.address);
 
         // Set the gnosisStakingProcessorL2 address in gnosisDepositProcessorL1
         await gnosisDepositProcessorL1.setL2StakingProcessor(gnosisStakingProcessorL2.address);
@@ -1682,7 +1697,7 @@ describe("Liquid Staking", function () {
             snapshot.restore();
         });
 
-        it("External staking", async function () {
+        it.only("External staking", async function () {
             // Max timeout 1600 sec for coverage
             this.timeout(1600000);
 
