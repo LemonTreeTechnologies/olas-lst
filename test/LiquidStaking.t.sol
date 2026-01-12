@@ -38,6 +38,7 @@ import {Collector} from "../contracts/l2/Collector.sol";
 import {ActivityModule} from "../contracts/l2/ActivityModule.sol";
 import {StakingManager} from "../contracts/l2/StakingManager.sol";
 import {ExternalStakingDistributor} from "../contracts/l2/ExternalStakingDistributor.sol";
+import {MultisigGuard} from "../contracts/l2/MultisigGuard.sol";
 import {ModuleActivityChecker} from "../contracts/l2/ModuleActivityChecker.sol";
 import {StakingTokenLocked} from "../contracts/l2/StakingTokenLocked.sol";
 import {GnosisStakingProcessorL2} from "../contracts/l2/bridging/GnosisStakingProcessorL2.sol";
@@ -81,6 +82,7 @@ contract LiquidStakingTest is Test {
     ActivityModule internal activityModule;
     StakingManager internal stakingManager;
     ExternalStakingDistributor internal externalStakingDistributor;
+    MultisigGuard internal multisigGuard;
     GnosisStakingProcessorL2 internal gnosisStakingProcessorL2;
     ModuleActivityChecker internal moduleActivityChecker;
     StakingTokenLocked internal stakingTokenInstance;
@@ -249,6 +251,12 @@ contract LiquidStakingTest is Test {
         // Fund external staking distributor with native to support staking creation
         vm.deal(address(externalStakingDistributor), 1 ether);
 
+        MultisigGuard multisigGuardImplementation = new MultisigGuard(address(serviceRegistryTokenUtility),
+            address(externalStakingDistributor));
+        initPayload = abi.encodeWithSelector(multisigGuardImplementation.initialize.selector);
+        Proxy multisigGuardProxy = new Proxy(address(multisigGuardImplementation), initPayload);
+        multisigGuard = ExternalStakingDistributor(payable(address(multisigGuardProxy)));
+
         bridgeRelayer = new BridgeRelayer(address(olas));
         gnosisDepositProcessorL1 = new GnosisDepositProcessorL1(address(olas), address(depository), address(bridgeRelayer),
             address(bridgeRelayer));
@@ -267,6 +275,9 @@ contract LiquidStakingTest is Test {
 
         // changeStakingProcessorL2 for externalStakingDistributor
         externalStakingDistributor.changeStakingProcessorL2(address(gnosisStakingProcessorL2));
+
+        // changeMultisigGuard for externalStakingDistributor
+        externalStakingDistributor.changeMultisigGuard(address(multisigGuard));
 
         // Set the gnosisStakingProcessorL2 address in gnosisDepositProcessorL1
         gnosisDepositProcessorL1.setL2StakingProcessor(address(gnosisStakingProcessorL2));

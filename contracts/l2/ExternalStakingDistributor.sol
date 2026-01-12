@@ -179,6 +179,7 @@ contract ExternalStakingDistributor is Implementation, ERC721TokenReceiver {
     );
     event SetStakingProxyConfigs(address[] stakingProxies, uint256[] proxyTypes);
     event SetManagingAgentStatuses(address[] managingAgents, bool[] statuses);
+    event SetCuratingAgentStatuses(address[] managingAgents, bool[] statuses);
     event Deposit(address indexed sender, bytes32 indexed operation, uint256 amount);
     event Withdraw(address indexed sender, bytes32 indexed operation, uint256 amount, uint256 unstakeRequestedAmount);
     event Claimed(address[] stakingProxies, uint256[] serviceIds, uint256[] rewards);
@@ -579,6 +580,11 @@ contract ExternalStakingDistributor is Implementation, ERC721TokenReceiver {
         }
         _locked = 2;
 
+        // Check for access: whitelisted curating agent or owner
+        if (!mapCuratingAgents[msg.sender] && msg.sender != owner) {
+            revert UnauthorizedAccount(msg.sender);
+        }
+
         // Check for whitelisted staking proxy type
         if (mapStakingProxyConfigs[stakingProxy] == 0) {
             revert ZeroValue();
@@ -774,6 +780,7 @@ contract ExternalStakingDistributor is Implementation, ERC721TokenReceiver {
     }
 
     /// @dev Sets managing agents statuses.
+    /// @notice This is required such that unstake does not happen without a reason.
     /// @param managingAgents Set of managing agents.
     /// @param statuses Corresponding set of statuses: true / false.
     function setManagingAgents(address[] memory managingAgents, bool[] memory statuses) external {
@@ -800,6 +807,36 @@ contract ExternalStakingDistributor is Implementation, ERC721TokenReceiver {
         }
 
         emit SetManagingAgentStatuses(managingAgents, statuses);
+    }
+
+    /// @dev Sets curating agents statuses.
+    /// @notice This is required such that potential malicious agents do not stake for no reason.
+    /// @param curatingAgents Set of curating agents.
+    /// @param statuses Corresponding set of statuses: true / false.
+    function setManagingAgents(address[] memory curatingAgents, bool[] memory statuses) external {
+        // Check for the ownership
+        if (msg.sender != owner) {
+            revert OwnerOnly(msg.sender, owner);
+        }
+
+        // Get number of agents
+        uint256 numAgents = curatingAgents.length;
+        // Check for array length
+        if (numAgents == 0 || numAgents != statuses.length) {
+            revert WrongArrayLength();
+        }
+
+        // Traverse curating agents
+        for (uint256 i = 0; i < numAgents; ++i) {
+            // Check for zero address
+            if (curatingAgents[i] == address(0)) {
+                revert ZeroAddress();
+            }
+
+            mapCuratingAgents[curatingAgents[i]] = statuses[i];
+        }
+
+        emit SetCuratingAgentStatuses(curatingAgents, statuses);
     }
 
     /// @dev Deposits OLAS for further staking.

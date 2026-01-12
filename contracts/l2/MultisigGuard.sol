@@ -2,7 +2,7 @@
 pragma solidity ^0.8.30;
 
 import {Implementation, ZeroAddress} from "../Implementation.sol";
-import "hardhat/console.sol";
+
 // External staking distributor interface
 interface IExternalStakingDistributor {
     /// @dev Gets service Id by multisig address.
@@ -145,6 +145,8 @@ contract MultisigGuard is Implementation {
         }
 
         // Execute multisig call
+        // Need to delegatecall implementation directly, as delegatecall to address(this) would result in zero address,
+        // since it will be storage of multisig at the time of delegatecall
         success = ISafe(msg.sender).execTransactionFromModule(implementation, 0, payload, ISafe.Operation.DelegateCall);
 
         // Check for success
