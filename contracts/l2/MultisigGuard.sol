@@ -11,7 +11,10 @@ interface IExternalStakingDistributor {
 
 // Generic Safe interface
 interface ISafe {
-    enum Operation {Call, DelegateCall}
+    enum Operation {
+        Call,
+        DelegateCall
+    }
 
     /// @dev Allows a Module to execute a Safe transaction without any further confirmations.
     /// @param to Destination address of module transaction.
@@ -19,8 +22,8 @@ interface ISafe {
     /// @param data Data payload of module transaction.
     /// @param operation Operation type of module transaction.
     function execTransactionFromModule(address to, uint256 value, bytes memory data, Operation operation)
-    external
-    returns (bool success);
+        external
+        returns (bool success);
 
     /// @dev Returns true if module is enabled.
     function isModuleEnabled(address module) external view returns (bool);
@@ -71,7 +74,6 @@ error OperatorBalanceSlashed(uint256 serviceId, uint256 provided, uint256 expect
 
 /// @dev Caught reentrancy violation.
 error ReentrancyGuard();
-
 
 /// @title MultisigGuard - Smart contract for multisig guard
 contract MultisigGuard is Implementation {
@@ -174,7 +176,8 @@ contract MultisigGuard is Implementation {
         }
 
         // Get token security deposit struct
-        IService.TokenSecurityDeposit memory tokenSecurityDeposit = IService(serviceRegistryTokenUtility).mapServiceIdTokenDeposit(serviceId);
+        IService.TokenSecurityDeposit memory tokenSecurityDeposit =
+            IService(serviceRegistryTokenUtility).mapServiceIdTokenDeposit(serviceId);
 
         // Push a pair of key defining variables into one key. Service Id or operator are not enough by themselves
         // operator occupies first 160 bits
@@ -183,7 +186,8 @@ contract MultisigGuard is Implementation {
         operatorServiceId |= serviceId << 160;
 
         // Get operator balance
-        uint256 operatorBalance = IService(serviceRegistryTokenUtility).mapOperatorAndServiceIdOperatorBalances(operatorServiceId);
+        uint256 operatorBalance =
+            IService(serviceRegistryTokenUtility).mapOperatorAndServiceIdOperatorBalances(operatorServiceId);
 
         // Check for operator balance value, which must be equal to security deposit due to current staking models
         if (operatorBalance != tokenSecurityDeposit.securityDeposit) {

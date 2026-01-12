@@ -255,7 +255,7 @@ contract LiquidStakingTest is Test {
             address(externalStakingDistributor));
         initPayload = abi.encodeWithSelector(multisigGuardImplementation.initialize.selector);
         Proxy multisigGuardProxy = new Proxy(address(multisigGuardImplementation), initPayload);
-        multisigGuard = ExternalStakingDistributor(payable(address(multisigGuardProxy)));
+        multisigGuard = MultisigGuard(payable(address(multisigGuardProxy)));
 
         bridgeRelayer = new BridgeRelayer(address(olas));
         gnosisDepositProcessorL1 = new GnosisDepositProcessorL1(address(olas), address(depository), address(bridgeRelayer),

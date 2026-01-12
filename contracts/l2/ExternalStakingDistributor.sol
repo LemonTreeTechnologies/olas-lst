@@ -485,7 +485,7 @@ contract ExternalStakingDistributor is Implementation, ERC721TokenReceiver {
         uint256 config = mapStakingProxyConfigs[stakingProxy];
 
         // Unwrap config
-        (uint256 collectorAmount, uint256 protocolAmount, , StakingType stakingType) = unwrapStakingConfig(config);
+        (uint256 collectorAmount, uint256 protocolAmount,, StakingType stakingType) = unwrapStakingConfig(config);
 
         // Calculate reward distribution
         collectorAmount = (reward * collectorAmount) / MAX_REWARD_FACTOR;
@@ -760,7 +760,8 @@ contract ExternalStakingDistributor is Implementation, ERC721TokenReceiver {
             }
 
             // Check proxy configs
-            (uint256 collectorRewardFactor, uint256 protocolRewardFactor, uint256 curatingAgentRewardFactor,) = unwrapStakingConfig(configs[i]);
+            (uint256 collectorRewardFactor, uint256 protocolRewardFactor, uint256 curatingAgentRewardFactor,) =
+                unwrapStakingConfig(configs[i]);
 
             // Check for collector and zero value
             if (collectorRewardFactor == 0) {
@@ -813,7 +814,7 @@ contract ExternalStakingDistributor is Implementation, ERC721TokenReceiver {
     /// @notice This is required such that potential malicious agents do not stake for no reason.
     /// @param curatingAgents Set of curating agents.
     /// @param statuses Corresponding set of statuses: true / false.
-    function setManagingAgents(address[] memory curatingAgents, bool[] memory statuses) external {
+    function setCuratingAgents(address[] memory curatingAgents, bool[] memory statuses) external {
         // Check for the ownership
         if (msg.sender != owner) {
             revert OwnerOnly(msg.sender, owner);
