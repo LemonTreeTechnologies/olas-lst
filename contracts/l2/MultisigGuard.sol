@@ -2,7 +2,7 @@
 pragma solidity ^0.8.30;
 
 import {Implementation, ZeroAddress} from "../Implementation.sol";
-
+import "hardhat/console.sol";
 // External staking distributor interface
 interface IExternalStakingDistributor {
     /// @dev Gets service Id by multisig address.
@@ -13,17 +13,14 @@ interface IExternalStakingDistributor {
 interface ISafe {
     enum Operation {Call, DelegateCall}
 
-    /// @dev Allows a Module to execute a Safe transaction without any further confirmations and return data
+    /// @dev Allows a Module to execute a Safe transaction without any further confirmations.
     /// @param to Destination address of module transaction.
     /// @param value Ether value of module transaction.
     /// @param data Data payload of module transaction.
     /// @param operation Operation type of module transaction.
-    function execTransactionFromModuleReturnData(
-        address to,
-        uint256 value,
-        bytes memory data,
-        Operation operation
-    ) external returns (bool success, bytes memory returnData);
+    function execTransactionFromModule(address to, uint256 value, bytes memory data, Operation operation)
+    external
+    returns (bool success);
 
     /// @dev Returns true if module is enabled.
     function isModuleEnabled(address module) external view returns (bool);
@@ -138,22 +135,21 @@ contract MultisigGuard is Implementation {
 
         // Check guard slot
         // Get guard payload
-        bytes memory payload = abi.encodeCall(this.getGuard, ());
-        // Assemble multisig call
-        bytes memory data = abi.encodeCall(ISafe.execTransactionFromModuleReturnData, (address(this), 0, payload, ISafe.Operation.DelegateCall));
+        bytes memory payload = abi.encodeCall(this.checkGuard, (address(this)));
 
-        bytes memory returnData;
-        (success, returnData) = msg.sender.staticcall(data);
-
-        if (!success) {
-            revert CallFailed(msg.sender, payload);
+        // Get implementation address
+        address implementation;
+        // solhint-disable-next-line avoid-low-level-calls
+        assembly {
+            implementation := sload(PROXY_SLOT)
         }
 
-        // Decode return data
-        address guard = abi.decode(returnData, (address));
-        // Compare guards
-        if (guard != address(this)) {
-            revert UnauthorizedGuard(guard);
+        // Execute multisig call
+        success = ISafe(msg.sender).execTransactionFromModule(implementation, 0, payload, ISafe.Operation.DelegateCall);
+
+        // Check for success
+        if (!success) {
+            revert CallFailed(msg.sender, payload);
         }
 
         // Check modules
@@ -195,12 +191,20 @@ contract MultisigGuard is Implementation {
         _locked = 1;
     }
 
-    /// @dev Gets multisig guard via a delegatecall.
-    function getGuard() external view returns (address guard) {
-        bytes32 slot = GUARD_STORAGE_SLOT;
+    /// @dev Checks multisig guard via delegatecall.
+    /// @param guard Required guard address.
+    function checkGuard(address guard) external view {
+        // Get guard address from slot
+        address slotGuard;
+
         // solhint-disable-next-line no-inline-assembly
         assembly {
-            guard := sload(slot)
+            slotGuard := sload(GUARD_STORAGE_SLOT)
+        }
+
+        // Compare guard addresses
+        if (slotGuard != guard) {
+            revert UnauthorizedGuard(slotGuard);
         }
     }
 }

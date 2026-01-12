@@ -1697,7 +1697,7 @@ describe("Liquid Staking", function () {
             snapshot.restore();
         });
 
-        it.only("External staking", async function () {
+        it("External staking", async function () {
             // Max timeout 1600 sec for coverage
             this.timeout(1600000);
 

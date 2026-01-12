@@ -354,12 +354,14 @@ contract ExternalStakingDistributor is Implementation, ERC721TokenReceiver {
         // Encode enable module (guard) function call
         data = abi.encodeCall(ISafe.enableModule, (guard));
         // MultiSend payload with the packed data of (operation, multisig address, value(0), payload length, payload)
-        msPayload = abi.encodePacked(ISafe.Operation.Call, multisig, uint256(0), data.length, data);
+        msPayload =
+            bytes.concat(msPayload, abi.encodePacked(ISafe.Operation.Call, multisig, uint256(0), data.length, data));
 
         // Encode set guard function call
         data = abi.encodeCall(ISafe.setGuard, (guard));
         // MultiSend payload with the packed data of (operation, multisig address, value(0), payload length, payload)
-        msPayload = abi.encodePacked(ISafe.Operation.Call, multisig, uint256(0), data.length, data);
+        msPayload =
+            bytes.concat(msPayload, abi.encodePacked(ISafe.Operation.Call, multisig, uint256(0), data.length, data));
 
         // Encode swap owner function call
         data = abi.encodeCall(ISafe.swapOwner, (address(0x1), address(this), agentInstance));
