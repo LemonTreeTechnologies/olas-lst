@@ -339,8 +339,13 @@ abstract contract DefaultStakingProcessorL2 is IBridgeErrors {
             // Get the current contract OLAS balance
             uint256 olasBalance = IToken(olas).balanceOf(address(this));
             if (olasBalance >= amount) {
-                // Approve OLAS for stakingManager
-                IToken(olas).approve(stakingManager, amount);
+                if (target == externalStakingDistributor) {
+                    // Approve OLAS for externalStakingDistributor
+                    IToken(olas).approve(externalStakingDistributor, amount);
+                } else {
+                    // Approve OLAS for stakingManager
+                    IToken(olas).approve(stakingManager, amount);
+                }
             } else {
                 // OLAS balance is not enough for redeem
                 revert InsufficientBalance(olasBalance, amount);
@@ -348,7 +353,11 @@ abstract contract DefaultStakingProcessorL2 is IBridgeErrors {
 
             // If request was queued due to insufficient balance - continue with the stake
             if (requestStatus == RequestStatus.INSUFFICIENT_OLAS_BALANCE) {
-                IStakingManager(stakingManager).stake(target, amount, operation);
+                if (target == externalStakingDistributor) {
+                    IExternalStakingDistributor(externalStakingDistributor).deposit(amount, operation);
+                } else {
+                    IStakingManager(stakingManager).stake(target, amount, operation);
+                }
             } else {
                 // Approve OLAS for collector to initiate L1 transfer for corresponding operation by agents
                 IToken(olas).approve(collector, amount);
@@ -358,7 +367,11 @@ abstract contract DefaultStakingProcessorL2 is IBridgeErrors {
             }
         } else if (operation == UNSTAKE || operation == UNSTAKE_RETIRED) {
             // UNSTAKE* must be finalized
-            IStakingManager(stakingManager).unstake(target, amount, operation);
+            if (target == externalStakingDistributor) {
+                IExternalStakingDistributor(externalStakingDistributor).withdrawAndRequestUnstake(amount, operation);
+            } else {
+                IStakingManager(stakingManager).unstake(target, amount, operation);
+            }
         } else {
             revert RequestFailed(batchHash, target, amount, operation, uint256(requestStatus));
         }

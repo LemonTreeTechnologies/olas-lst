@@ -88,16 +88,16 @@ contract BaseDepositProcessorL1 is DefaultDepositProcessorL1 {
             );
         }
 
-        uint256 gasLimitMessage;
+        uint32 gasLimitMessage;
         // Check for the bridge payload length
         if (bridgePayload.length == BRIDGE_PAYLOAD_LENGTH) {
             // Decode bridge payload
-            gasLimitMessage = abi.decode(bridgePayload, (uint256));
+            gasLimitMessage = abi.decode(bridgePayload, (uint32));
         }
 
         // Check for the recommended message gas limit
         if (gasLimitMessage < MESSAGE_GAS_LIMIT) {
-            gasLimitMessage = MESSAGE_GAS_LIMIT;
+            gasLimitMessage = uint32(MESSAGE_GAS_LIMIT);
         }
 
         // Assemble data payload
@@ -105,7 +105,7 @@ contract BaseDepositProcessorL1 is DefaultDepositProcessorL1 {
 
         // Send message to L2
         // Reference: https://docs.optimism.io/builders/app-developers/bridging/messaging#for-l1-to-l2-transactions-1
-        IBridge(l1MessageRelayer).sendMessage(l2StakingProcessor, data, uint32(gasLimitMessage));
+        IBridge(l1MessageRelayer).sendMessage(l2StakingProcessor, data, gasLimitMessage);
 
         // Since there is no returned message sequence, use the batch hash
         sequence = uint256(batchHash);

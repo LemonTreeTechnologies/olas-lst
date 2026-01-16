@@ -140,7 +140,7 @@ contract Treasury is Implementation, ERC6909 {
     /// @notice Vault reserves are used first. If there is a lack of OLAS reserves, the backup amount is requested
     ///         to be unstaked from other models.
     /// @param stAmount Provided stAmount to burn in favor of OLAS tokens.
-    /// @param chainIds 2D set of chain Ids with [staked externals] and [LST staking proxies].
+    /// @param chainIds 2D set of chain Ids with [external staking distributors] and [LST staking proxies].
     /// @param externalAmounts Set of corresponding amounts for staked externals.
     /// @param stakingProxies Set of staking proxies corresponding to each chain Id in [LST staking proxies] set.
     /// @param bridgePayloads 2D set of bridge payloads corresponding to each chain Id.

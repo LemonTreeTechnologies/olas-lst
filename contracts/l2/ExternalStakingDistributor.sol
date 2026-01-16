@@ -94,6 +94,10 @@ interface ISafe {
     /// @param oldOwner Owner address to be replaced.
     /// @param newOwner New owner address.
     function swapOwner(address prevOwner, address oldOwner, address newOwner) external;
+
+    /// @dev Sets guard that checks transactions before and after execution.
+    /// @param guard Guard address.
+    function setGuard(address guard) external;
 }
 
 // SafeMultisigWithRecoveryModule interface
@@ -148,6 +152,7 @@ contract ExternalStakingDistributor is Implementation, ERC721TokenReceiver {
     }
 
     event StakingProcessorL2Updated(address indexed l2StakingProcessor);
+    event MultisigGuardUpdated(address indexed guard);
     event ExternalServiceStaked(
         address indexed sender,
         address indexed stakingProxy,
@@ -174,6 +179,7 @@ contract ExternalStakingDistributor is Implementation, ERC721TokenReceiver {
     );
     event SetStakingProxyConfigs(address[] stakingProxies, uint256[] proxyTypes);
     event SetManagingAgentStatuses(address[] managingAgents, bool[] statuses);
+    event SetCuratingAgentStatuses(address[] managingAgents, bool[] statuses);
     event Deposit(address indexed sender, bytes32 indexed operation, uint256 amount);
     event Withdraw(address indexed sender, bytes32 indexed operation, uint256 amount, uint256 unstakeRequestedAmount);
     event Claimed(address[] stakingProxies, uint256[] serviceIds, uint256[] rewards);
@@ -216,6 +222,8 @@ contract ExternalStakingDistributor is Implementation, ERC721TokenReceiver {
     uint256 public stakedBalance;
     // L2 staking processor address
     address public l2StakingProcessor;
+    // Multisig guard address
+    address public guard;
 
     // Nonce
     uint256 internal _nonce;
@@ -230,8 +238,12 @@ contract ExternalStakingDistributor is Implementation, ERC721TokenReceiver {
     mapping(bytes32 => uint256) public mapUnstakeOperationRequestedAmounts;
     // Mapping of service Id => agent address curating it
     mapping(uint256 => address) public mapServiceIdCuratingAgents;
+    // Mapping whitelisted curating agent addresses
+    mapping(address => bool) public mapCuratingAgents;
     // Mapping of whitelisted managing agent addresses
     mapping(address => bool) public mapManagingAgents;
+    // Mapping of multisig address => service Id
+    mapping(address => uint256) public mapMultisigServiceIds;
 
     /// @dev ExternalStakingDistributor constructor.
     /// @param _olas OLAS token address.
@@ -280,21 +292,38 @@ contract ExternalStakingDistributor is Implementation, ERC721TokenReceiver {
         owner = msg.sender;
     }
 
-    /// @dev Changes token relayer address.
-    /// @param newStakingProcessorL2 Address of a new owner.
+    /// @dev Changes staking processor L2 address.
+    /// @param newStakingProcessorL2 New staking processor L2 address.
     function changeStakingProcessorL2(address newStakingProcessorL2) external {
         // Check for ownership
         if (msg.sender != owner) {
             revert OwnerOnly(msg.sender, owner);
         }
 
-        // Check for the zero address
+        // Check for zero address
         if (newStakingProcessorL2 == address(0)) {
             revert ZeroAddress();
         }
 
         l2StakingProcessor = newStakingProcessorL2;
         emit StakingProcessorL2Updated(newStakingProcessorL2);
+    }
+
+    /// @dev Changes multisig guard address.
+    /// @param newGuard New multisig guard address.
+    function changeMultisigGuard(address newGuard) external {
+        // Check for ownership
+        if (msg.sender != owner) {
+            revert OwnerOnly(msg.sender, owner);
+        }
+
+        // Check for zero address
+        if (newGuard == address(0)) {
+            revert ZeroAddress();
+        }
+
+        guard = newGuard;
+        emit MultisigGuardUpdated(newGuard);
     }
 
     /// @dev Creates multisig and enables address(this) as module.
@@ -304,6 +333,7 @@ contract ExternalStakingDistributor is Implementation, ERC721TokenReceiver {
         // Prepare Safe multisig data
         uint256 localNonce = _nonce;
         uint256 randomNonce = uint256(keccak256(abi.encodePacked(block.timestamp, msg.sender, localNonce)));
+        bytes memory data = abi.encode(fallbackHandler, randomNonce);
 
         // Update global nonce
         _nonce = localNonce + 1;
@@ -311,17 +341,24 @@ contract ExternalStakingDistributor is Implementation, ERC721TokenReceiver {
         // Create Safe with self as owner
         address[] memory owners = new address[](1);
         owners[0] = address(this);
-        bytes memory data = abi.encode(fallbackHandler, randomNonce);
         multisig = ISafeMultisigWithRecoveryModule(safeMultisigWithRecoveryModule).create(owners, THRESHOLD, data);
 
-        // Enable self as module
-        bytes32 r = bytes32(uint256(uint160(address(this))));
-        bytes memory signature = abi.encodePacked(r, bytes32(0), uint8(1));
-
-        // Encode enable module function call
+        // Encode enable module (external staking distributor) function call
         data = abi.encodeCall(ISafe.enableModule, (address(this)));
         // MultiSend payload with the packed data of (operation, multisig address, value(0), payload length, payload)
         bytes memory msPayload = abi.encodePacked(ISafe.Operation.Call, multisig, uint256(0), data.length, data);
+
+        // Encode enable module (guard) function call
+        data = abi.encodeCall(ISafe.enableModule, (guard));
+        // MultiSend payload with the packed data of (operation, multisig address, value(0), payload length, payload)
+        msPayload =
+            bytes.concat(msPayload, abi.encodePacked(ISafe.Operation.Call, multisig, uint256(0), data.length, data));
+
+        // Encode set guard function call
+        data = abi.encodeCall(ISafe.setGuard, (guard));
+        // MultiSend payload with the packed data of (operation, multisig address, value(0), payload length, payload)
+        msPayload =
+            bytes.concat(msPayload, abi.encodePacked(ISafe.Operation.Call, multisig, uint256(0), data.length, data));
 
         // Encode swap owner function call
         data = abi.encodeCall(ISafe.swapOwner, (address(0x1), address(this), agentInstance));
@@ -331,6 +368,10 @@ contract ExternalStakingDistributor is Implementation, ERC721TokenReceiver {
 
         // Multisend call to execute all the payloads
         msPayload = abi.encodeCall(IMultiSend.multiSend, (msPayload));
+
+        // Construct signature for contract execution
+        bytes32 r = bytes32(uint256(uint160(address(this))));
+        bytes memory signature = abi.encodePacked(r, bytes32(0), uint8(1));
 
         // Execute multisig transaction
         bool success = ISafe(multisig)
@@ -403,6 +444,9 @@ contract ExternalStakingDistributor is Implementation, ERC721TokenReceiver {
             // Create multisig with address(this) as module and swap owners to agentInstance
             multisig = _createMultisigWithSelfAsModule(agentInstance);
 
+            // Link mutlsig and service Id
+            mapMultisigServiceIds[multisig] = serviceId;
+
             // Deploy service via same address multisig
             IService(serviceManager).deploy(serviceId, safeSameAddressMultisig, abi.encodePacked(multisig));
         } else {
@@ -441,7 +485,7 @@ contract ExternalStakingDistributor is Implementation, ERC721TokenReceiver {
         uint256 config = mapStakingProxyConfigs[stakingProxy];
 
         // Unwrap config
-        (uint256 collectorAmount, uint256 protocolAmount, , StakingType stakingType) = unwrapStakingConfig(config);
+        (uint256 collectorAmount, uint256 protocolAmount,, StakingType stakingType) = unwrapStakingConfig(config);
 
         // Calculate reward distribution
         collectorAmount = (reward * collectorAmount) / MAX_REWARD_FACTOR;
@@ -535,6 +579,11 @@ contract ExternalStakingDistributor is Implementation, ERC721TokenReceiver {
             revert ReentrancyGuard();
         }
         _locked = 2;
+
+        // Check for access: whitelisted curating agent or owner
+        if (!mapCuratingAgents[msg.sender] && msg.sender != owner) {
+            revert UnauthorizedAccount(msg.sender);
+        }
 
         // Check for whitelisted staking proxy type
         if (mapStakingProxyConfigs[stakingProxy] == 0) {
@@ -711,7 +760,8 @@ contract ExternalStakingDistributor is Implementation, ERC721TokenReceiver {
             }
 
             // Check proxy configs
-            (uint256 collectorRewardFactor, uint256 protocolRewardFactor, uint256 curatingAgentRewardFactor,) = unwrapStakingConfig(configs[i]);
+            (uint256 collectorRewardFactor, uint256 protocolRewardFactor, uint256 curatingAgentRewardFactor,) =
+                unwrapStakingConfig(configs[i]);
 
             // Check for collector and zero value
             if (collectorRewardFactor == 0) {
@@ -731,6 +781,7 @@ contract ExternalStakingDistributor is Implementation, ERC721TokenReceiver {
     }
 
     /// @dev Sets managing agents statuses.
+    /// @notice This is required such that unstake does not happen without a reason.
     /// @param managingAgents Set of managing agents.
     /// @param statuses Corresponding set of statuses: true / false.
     function setManagingAgents(address[] memory managingAgents, bool[] memory statuses) external {
@@ -757,6 +808,36 @@ contract ExternalStakingDistributor is Implementation, ERC721TokenReceiver {
         }
 
         emit SetManagingAgentStatuses(managingAgents, statuses);
+    }
+
+    /// @dev Sets curating agents statuses.
+    /// @notice This is required such that potential malicious agents do not stake for no reason.
+    /// @param curatingAgents Set of curating agents.
+    /// @param statuses Corresponding set of statuses: true / false.
+    function setCuratingAgents(address[] memory curatingAgents, bool[] memory statuses) external {
+        // Check for the ownership
+        if (msg.sender != owner) {
+            revert OwnerOnly(msg.sender, owner);
+        }
+
+        // Get number of agents
+        uint256 numAgents = curatingAgents.length;
+        // Check for array length
+        if (numAgents == 0 || numAgents != statuses.length) {
+            revert WrongArrayLength();
+        }
+
+        // Traverse curating agents
+        for (uint256 i = 0; i < numAgents; ++i) {
+            // Check for zero address
+            if (curatingAgents[i] == address(0)) {
+                revert ZeroAddress();
+            }
+
+            mapCuratingAgents[curatingAgents[i]] = statuses[i];
+        }
+
+        emit SetCuratingAgentStatuses(curatingAgents, statuses);
     }
 
     /// @dev Deposits OLAS for further staking.

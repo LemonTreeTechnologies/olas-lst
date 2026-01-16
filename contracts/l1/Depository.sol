@@ -65,6 +65,13 @@ error WrongStakingModel(uint256 stakingModelId);
 /// @param account Account address.
 error UnauthorizedAccount(address account);
 
+/// @dev Failure of a transfer.
+/// @param token Address of a token.
+/// @param from Address `from`.
+/// @param to Address `to`.
+/// @param amount Token amount.
+error TransferFailed(address token, address from, address to, uint256 amount);
+
 /// @dev Caught reentrancy violation.
 error ReentrancyGuard();
 
@@ -117,8 +124,8 @@ contract Depository is Implementation {
     );
     event Unstake(address indexed sender, uint256[] chainIds, address[] stakingProxies, uint256[] amounts);
     event Retired(uint256[] chainIds, address[] stakingProxies);
-    event SetExternalStakingDistributorChainIds(address[] externalStakingDistributors, uint256[] chainIds);
-    event StakeExternal(
+    event SetExternalStakingDistributorChainIds(uint256[] chainIds, address[] externalStakingDistributors);
+    event DepositExternal(
         address indexed sender, uint256[] chainIds, address[] externalStakingDistributors, uint256[] amounts
     );
     event UnstakeExternal(
@@ -128,6 +135,8 @@ contract Depository is Implementation {
         uint256[] amounts,
         bytes32 operation
     );
+    event ValueRefunded(address indexed sender, uint256 refund, bool success);
+    event Drained(address indexed sender, address indexed receiver, uint256 amount);
     event DepositoryPaused();
     event DepositoryUnpaused();
 
@@ -270,9 +279,14 @@ contract Depository is Implementation {
         bytes32 operation,
         address sender
     ) internal {
+        uint256 totalSumValues;
+
         // Traverse all array elements
         for (uint256 i = 0; i < chainIds.length; ++i) {
             if (amounts[i] == 0) continue;
+
+            // Add to total sum values
+            totalSumValues += values[i];
 
             // Get corresponding deposit processor
             address depositProcessor = mapChainIdDepositProcessors[chainIds[i]];
@@ -285,6 +299,7 @@ contract Depository is Implementation {
             // Stake related only
             if (operation == STAKE) {
                 // Transfer OLAS to depositProcessor
+                // Transfer is safe because depositProcessor for msg.sender being Depository contract
                 IToken(olas).transfer(depositProcessor, amounts[i]);
             }
 
@@ -292,6 +307,23 @@ contract Depository is Implementation {
             IDepositProcessor(depositProcessor).sendMessage{value: values[i]}(
                 stakingProxies[i], amounts[i], bridgePayloads[i], operation, sender
             );
+        }
+
+        // Check for sum of values
+        if (totalSumValues > msg.value) {
+            revert Overflow(totalSumValues, msg.value);
+        }
+
+        // Calculate excessive value
+        uint256 refund = msg.value - totalSumValues;
+
+        // Check for refund value
+        if (refund > 0) {
+            // If the call fails, ignore to avoid the attack that would prevent this function from executing
+            // solhint-disable-next-line avoid-low-level-calls
+            (bool success,) = msg.sender.call{value: refund}("");
+
+            emit ValueRefunded(sender, refund, success);
         }
     }
 
@@ -866,7 +898,7 @@ contract Depository is Implementation {
             mapChainIdStakedExternals[chainIds[i]] = uint256(uint160(externalStakingDistributors[i]));
         }
 
-        emit SetExternalStakingDistributorChainIds(externalStakingDistributors, chainIds);
+        emit SetExternalStakingDistributorChainIds(chainIds, externalStakingDistributors);
     }
 
     /// @dev Initiates cross-chain stake request for external staking distributors by owner.
@@ -950,7 +982,7 @@ contract Depository is Implementation {
         // Send funds to external staking distributors via relevant deposit processors
         _operationSendMessage(chainIds, externalStakingDistributors, amounts, bridgePayloads, values, STAKE, msg.sender);
 
-        emit StakeExternal(msg.sender, chainIds, externalStakingDistributors, amounts);
+        emit DepositExternal(msg.sender, chainIds, externalStakingDistributors, amounts);
     }
 
     /// @dev Initiates cross-chain unstake request on external staking distributors by Treasury or owner.
@@ -1045,6 +1077,29 @@ contract Depository is Implementation {
         _operationSendMessage(chainIds, externalStakingDistributors, amounts, bridgePayloads, values, operation, sender);
 
         emit UnstakeExternal(sender, chainIds, externalStakingDistributors, amounts, operation);
+    }
+
+    /// @dev Drains possible stuck values.
+    function drain() external {
+        // Get owner address: it cannot be zero because the proxy is already initialized
+        address localOwner = owner;
+
+        // Get contract value balance
+        uint256 amount = address(this).balance;
+
+        // Check for zero value
+        if (amount == 0) {
+            revert ZeroValue();
+        }
+
+        // solhint-disable-next-line avoid-low-level-calls
+        (bool success,) = localOwner.call{value: amount}("");
+
+        if (!success) {
+            revert TransferFailed(address(0), address(this), localOwner, amount);
+        }
+
+        emit Drained(msg.sender, localOwner, amount);
     }
 
     /// @dev Pauses contract.

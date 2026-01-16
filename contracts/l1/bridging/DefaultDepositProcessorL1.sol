@@ -21,6 +21,7 @@ abstract contract DefaultDepositProcessorL1 is IBridgeErrors {
     event MessagePosted(uint256 indexed sequence, address indexed target, uint256 amount, bytes32 indexed batchHash);
     event L2StakerUpdated(address indexed l2StakingProcessor);
     event LeftoversRefunded(address indexed sender, uint256 leftovers, bool success);
+    event Drained(address indexed sender, address indexed receiver, uint256 amount);
 
     // Stake operation
     bytes32 public constant STAKE = 0x1bcc0f4c3fad314e585165815f94ecca9b96690a26d6417d7876448a9a867a69;
@@ -171,6 +172,29 @@ abstract contract DefaultDepositProcessorL1 is IBridgeErrors {
     /// @param l2Processor L2 staking processor address.
     function setL2StakingProcessor(address l2Processor) external virtual {
         _setL2StakingProcessor(l2Processor);
+    }
+
+    /// @dev Drains possible stuck values.
+    function drain() external {
+        // Get owner address: it cannot be zero because the proxy is already initialized
+        address localOwner = owner;
+
+        // Get contract value balance
+        uint256 amount = address(this).balance;
+
+        // Check for zero value
+        if (amount == 0) {
+            revert ZeroValue();
+        }
+
+        // solhint-disable-next-line avoid-low-level-calls
+        (bool success,) = localOwner.call{value: amount}("");
+
+        if (!success) {
+            revert TransferFailed(address(0), address(this) , localOwner, amount);
+        }
+
+        emit Drained(msg.sender, localOwner, amount);
     }
 
     /// @dev Gets the maximum number of token decimals able to be transferred across the bridge.

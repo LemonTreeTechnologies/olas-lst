@@ -193,8 +193,8 @@ contract StakingManager is Implementation, ERC721TokenReceiver {
         owner = msg.sender;
     }
 
-    /// @dev Changes token relayer address.
-    /// @param newStakingProcessorL2 Address of a new owner.
+    /// @dev Changes staking processor L2 address.
+    /// @param newStakingProcessorL2 New staking processor L2 address.
     function changeStakingProcessorL2(address newStakingProcessorL2) external {
         // Check for ownership
         if (msg.sender != owner) {
@@ -430,7 +430,7 @@ contract StakingManager is Implementation, ERC721TokenReceiver {
         } else {
             // This must never happen except for unlikely cases where L2 staking setup does not correspond L1 numbers,
             // or when stake failed and now symmetrical unstakes take place
-            if (mapStakedServiceIds[stakingProxy].length == 0) {
+            if (mapLastStakedServiceIdxs[stakingProxy] == 0) {
                 // Get amount - balance difference
                 uint256 amountDiff = amount - balance;
                 // Amount becomes balance

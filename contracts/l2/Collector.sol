@@ -9,6 +9,12 @@ interface IBridge {
 
 // ERC20 token interface
 interface IToken {
+    /// @dev Sets `amount` as the allowance of `spender` over the caller's tokens.
+    /// @param spender Account address that will be able to transfer tokens on behalf of the caller.
+    /// @param amount Token amount.
+    /// @return True if the function execution is successful.
+    function approve(address spender, uint256 amount) external returns (bool);
+
     /// @dev Transfers the token amount.
     /// @param to Address to transfer to.
     /// @param amount The amount to transfer.
@@ -354,8 +360,8 @@ contract Collector is Implementation {
 
         emit TokensRelayed(receiver, olasBalance);
 
-        // Transfer tokens
-        IToken(olas).transfer(l2StakingProcessor, olasBalance);
+        // Approve tokens for staking processor
+        IToken(olas).approve(l2StakingProcessor, olasBalance);
 
         // Send tokens to L1
         IBridge(l2StakingProcessor).relayToL1{value: msg.value}(receiver, olasBalance, bridgePayload);
