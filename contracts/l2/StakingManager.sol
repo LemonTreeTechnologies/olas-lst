@@ -193,8 +193,8 @@ contract StakingManager is Implementation, ERC721TokenReceiver {
         owner = msg.sender;
     }
 
-    /// @dev Changes token relayer address.
-    /// @param newStakingProcessorL2 Address of a new owner.
+    /// @dev Changes staking processor L2 address.
+    /// @param newStakingProcessorL2 New staking processor L2 address.
     function changeStakingProcessorL2(address newStakingProcessorL2) external {
         // Check for ownership
         if (msg.sender != owner) {
