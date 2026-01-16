@@ -101,7 +101,7 @@ contract MultisigGuard is Implementation {
         externalStakingDistributor = _externalStakingDistributor;
     }
 
-    /// @dev Initializes collector.
+    /// @dev Initializes multisig guard.
     function initialize() external {
         if (owner != address(0)) {
             revert AlreadyInitialized();

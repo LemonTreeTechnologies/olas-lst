@@ -191,7 +191,7 @@ abstract contract DefaultDepositProcessorL1 is IBridgeErrors {
         (bool success,) = localOwner.call{value: amount}("");
 
         if (!success) {
-            revert TransferFailed(address(0), msg.sender, localOwner, amount);
+            revert TransferFailed(address(0), address(this) , localOwner, amount);
         }
 
         emit Drained(msg.sender, localOwner, amount);

@@ -333,6 +333,7 @@ contract ExternalStakingDistributor is Implementation, ERC721TokenReceiver {
         // Prepare Safe multisig data
         uint256 localNonce = _nonce;
         uint256 randomNonce = uint256(keccak256(abi.encodePacked(block.timestamp, msg.sender, localNonce)));
+        bytes memory data = abi.encode(fallbackHandler, randomNonce);
 
         // Update global nonce
         _nonce = localNonce + 1;
@@ -340,12 +341,7 @@ contract ExternalStakingDistributor is Implementation, ERC721TokenReceiver {
         // Create Safe with self as owner
         address[] memory owners = new address[](1);
         owners[0] = address(this);
-        bytes memory data = abi.encode(fallbackHandler, randomNonce);
         multisig = ISafeMultisigWithRecoveryModule(safeMultisigWithRecoveryModule).create(owners, THRESHOLD, data);
-
-        // Enable self as module
-        bytes32 r = bytes32(uint256(uint160(address(this))));
-        bytes memory signature = abi.encodePacked(r, bytes32(0), uint8(1));
 
         // Encode enable module (external staking distributor) function call
         data = abi.encodeCall(ISafe.enableModule, (address(this)));
@@ -372,6 +368,10 @@ contract ExternalStakingDistributor is Implementation, ERC721TokenReceiver {
 
         // Multisend call to execute all the payloads
         msPayload = abi.encodeCall(IMultiSend.multiSend, (msPayload));
+
+        // Construct signature for contract execution
+        bytes32 r = bytes32(uint256(uint160(address(this))));
+        bytes memory signature = abi.encodePacked(r, bytes32(0), uint8(1));
 
         // Execute multisig transaction
         bool success = ISafe(multisig)
