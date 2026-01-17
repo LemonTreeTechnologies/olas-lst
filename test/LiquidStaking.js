@@ -1812,7 +1812,7 @@ describe("Liquid Staking", function () {
             let service = await serviceRegistry.getService(serviceId);
             let multisigV1 = await ethers.getContractAt("GnosisSafe", service.multisig);
 
-            // Make transactions by the service multisig
+            // Make transactions by service multisig
             let nonce = await multisigV1.nonce();
             let txHashData = await safeContracts.buildContractCall(multisigV1, "getThreshold", [], nonce, 0, 0);
             let signMessageData = await safeContracts.safeSignMessage(signers[1], multisigV1, txHashData, 0);
@@ -1827,6 +1827,24 @@ describe("Liquid Staking", function () {
             txHashData = await safeContracts.buildContractCall(multisigV2, "getThreshold", [], nonce, 0, 0);
             signMessageData = await safeContracts.safeSignMessage(signers[2], multisigV2, txHashData, 0);
             await safeContracts.executeTx(multisigV2, txHashData, [signMessageData], 0);
+
+            // Try to kill guard
+            nonce = await multisigV1.nonce();
+            txHashData = await safeContracts.buildContractCall(multisigV1, "setGuard", [AddressZero], nonce, 0, 0);
+            signMessageData = await safeContracts.safeSignMessage(signers[1], multisigV1, txHashData, 0);
+            await expect(
+                safeContracts.executeTx(multisigV1, txHashData, [signMessageData], 0)
+            ).to.be.reverted;
+
+            // Try to disable module
+            const sentinelModules = "0x0000000000000000000000000000000000000001";
+            nonce = await multisigV1.nonce();
+            txHashData = await safeContracts.buildContractCall(multisigV1, "disableModule", [sentinelModules,
+                recoveryModule.address], nonce, 0, 0);
+            signMessageData = await safeContracts.safeSignMessage(signers[1], multisigV1, txHashData, 0);
+            await expect(
+                safeContracts.executeTx(multisigV1, txHashData, [signMessageData], 0)
+            ).to.be.reverted;
 
             // Try to unstake before required staking time is passed
             await expect(
@@ -1896,7 +1914,7 @@ describe("Liquid Staking", function () {
             agentInstanceAddressV2 = signers[4].address;
             await externalStakingDistributor.stake(externalStakingTokenAddressV2, serviceId + 1, agentId, defaultHash, agentInstanceAddressV2);
 
-            // Make transactions by the service multisigs
+            // Make transactions by service multisigs
             nonce = await multisigV1.nonce();
             txHashData = await safeContracts.buildContractCall(multisigV1, "getThreshold", [], nonce, 0, 0);
             signMessageData = await safeContracts.safeSignMessage(signers[3], multisigV1, txHashData, 0);
