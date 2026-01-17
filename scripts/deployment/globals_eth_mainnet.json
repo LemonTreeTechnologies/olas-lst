@@ -27,7 +27,7 @@
   "depositoryProxyAddress": "0xEfF4A1D9faF5c750d5E32754c40Cf163767C63A4",
   "treasuryAddress": "0x327F1da21255d1d02cF2e7155659F8FBf12dB4ee",
   "treasuryProxyAddress": "0xcfA10d192c3999b5CA59aD3c7512c40f1B919e01",
-  "gnosisDepositProcessorL1Address": "0x4A26F79b9dd73a48d57ce4DF70295A875afa006c",
-  "gnosisStakingProcessorL2Address": "0x4A26F79b9dd73a48d57ce4DF70295A875afa006c",
+  "gnosisDepositProcessorL1Address": "0xeB7613bfbb40fab1DA73DC0b1c16Ec13639C305B",
+  "gnosisStakingProcessorL2Address": "0xDAE0B11e5bF81216283cB95d30039fA3D650eFE3",
   "baseDepositProcessorL1Address": "0x40abf47B926181148000DbCC7c8DE76A3a61a66f"
 }

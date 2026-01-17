@@ -3,7 +3,7 @@
 # Check if $1 is provided
 if [ -z "$1" ]; then
   echo "Usage: $0 <network>"
-  echo "Example: $0 base_mainnet"
+  echo "Example: $0 eth_mainnet"
   exit 1
 fi
 
@@ -31,15 +31,8 @@ derivationPath=$(jq -r '.derivationPath' $globals)
 chainId=$(jq -r '.chainId' $globals)
 networkURL=$(jq -r '.networkURL' $globals)
 
-olasAddress=$(jq -r '.olasAddress' $globals)
-stakingManagerProxyAddress=$(jq -r '.stakingManagerProxyAddress' $globals)
-externalStakingDistributorProxyAddress=$(jq -r '.externalStakingDistributorProxyAddress' $globals)
-collectorProxyAddress=$(jq -r '.collectorProxyAddress' $globals)
-gnosisOmniBridgeAddress=$(jq -r '.gnosisOmniBridgeAddress' $globals)
-gnosisAMBHomeAddress=$(jq -r '.gnosisAMBHomeAddress' $globals)
-gnosisDepositProcessorL1Address=$(jq -r '.gnosisDepositProcessorL1Address' $globals)
-l1ChainId=$(jq -r '.l1ChainId' $globals)
-
+externalStakingDistributorAddress=$(jq -r '.externalStakingDistributorAddress' $globals)
+proxyData=$(cast calldata "initialize()")
 
 # Check for Polygon keys only since on other networks those are not needed
 if [ $chainId == 137 ]; then
@@ -56,9 +49,9 @@ elif [ $chainId == 80002 ]; then
     fi
 fi
 
-contractName="GnosisStakingProcessorL2"
-contractPath="contracts/l2/bridging/$contractName.sol:$contractName"
-constructorArgs="$olasAddress $stakingManagerProxyAddress $externalStakingDistributorProxyAddress $collectorProxyAddress $gnosisOmniBridgeAddress $gnosisAMBHomeAddress $gnosisDepositProcessorL1Address $l1ChainId"
+contractName="Proxy"
+contractPath="contracts/$contractName.sol:$contractName"
+constructorArgs="$externalStakingDistributorAddress $proxyData"
 contractArgs="$contractPath --constructor-args $constructorArgs"
 
 # Get deployer based on the ledger flag
@@ -79,10 +72,10 @@ echo "${green}Deployment of: $contractArgs${reset}"
 # Deploy the contract and capture the address
 execCmd="forge create --broadcast --rpc-url $networkURL$API_KEY $walletArgs $contractArgs"
 deploymentOutput=$($execCmd)
-gnosisStakingProcessorL2Address=$(echo "$deploymentOutput" | grep 'Deployed to:' | awk '{print $3}')
+externalStakingDistributorProxyAddress=$(echo "$deploymentOutput" | grep 'Deployed to:' | awk '{print $3}')
 
 # Get output length
-outputLength=${#gnosisStakingProcessorL2Address}
+outputLength=${#externalStakingDistributorProxyAddress}
 
 # Check for the deployed address
 if [ $outputLength != 42 ]; then
@@ -92,11 +85,11 @@ fi
 
 
 # Write new deployed contract back into deployment file
-echo "$(jq '. += {"gnosisStakingProcessorL2Address":"'$gnosisStakingProcessorL2Address'"}' $globals)" > $globals
+echo "$(jq '. += {"externalStakingDistributorProxyAddress":"'$externalStakingDistributorProxyAddress'"}' $globals)" > $globals
 
 # Verify contract
 if [ "$contractVerification" == "true" ]; then
-  contractParams="$gnosisStakingProcessorL2Address $contractPath --constructor-args $(cast abi-encode "constructor(address,address,address,address,address,address,address,uint256)" $constructorArgs)"
+  contractParams="$externalStakingDistributorProxyAddress $contractPath --constructor-args $(cast abi-encode "constructor(address,bytes)" $constructorArgs)"
   echo "Verification contract params: $contractParams"
 
   echo "${green}Verifying contract on Etherscan...${reset}"
@@ -109,4 +102,4 @@ if [ "$contractVerification" == "true" ]; then
   fi
 fi
 
-echo "${green}$contractName deployed at: $gnosisStakingProcessorL2Address${reset}"
+echo "${green}$contractName deployed at: $externalStakingDistributorProxyAddress${reset}"

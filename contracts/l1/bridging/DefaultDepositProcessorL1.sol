@@ -27,8 +27,6 @@ abstract contract DefaultDepositProcessorL1 is IBridgeErrors {
     bytes32 public constant STAKE = 0x1bcc0f4c3fad314e585165815f94ecca9b96690a26d6417d7876448a9a867a69;
     // receiveMessage selector to be executed on L2
     bytes4 public constant RECEIVE_MESSAGE = bytes4(keccak256(bytes("receiveMessage(bytes)")));
-    // Maximum chain Id as per EVM specs
-    uint256 public constant MAX_CHAIN_ID = type(uint64).max / 2 - 36;
     // Token transfer gas limit for L2
     // This is safe as the value is practically bigger than observed ones on numerous chains
     uint256 public constant TOKEN_GAS_LIMIT = 300_000;
@@ -48,9 +46,6 @@ abstract contract DefaultDepositProcessorL1 is IBridgeErrors {
     address public owner;
     // Nonce for each message batch
     uint256 public messageBatchNonce;
-
-    // Processed batch hashes
-    mapping(bytes32 => bool) public processedHashes;
 
     /// @dev DefaultDepositProcessorL1 constructor.
     /// @param _olas OLAS token address on L1.
@@ -128,24 +123,6 @@ abstract contract DefaultDepositProcessorL1 is IBridgeErrors {
         messageBatchNonce = batchNonce + 1;
 
         emit MessagePosted(sequence, target, amount, batchHash);
-    }
-
-    /// @dev Updated the batch hash of a failed message, if applicable.
-    /// @param batchHash Unique batch hash for each message transfer.
-    function updateHashMaintenance(bytes32 batchHash) external {
-        // Check for the dispenser contract to be the msg.sender
-        if (msg.sender != l1Depository) {
-            revert ManagerOnly(l1Depository, msg.sender);
-        }
-
-        // Check that the batch hash has not yet being processed
-        // Possible scenario: bridge failed to deliver from L2 to L1, then after some time the bridge somehow
-        // re-delivers the same message, and the maintenance function is called by the DAO as well,
-        // that is not needed already anymore since the message was processed naturally via a recovered bridge
-        if (processedHashes[batchHash]) {
-            revert AlreadyDelivered(batchHash);
-        }
-        processedHashes[batchHash] = true;
     }
 
     /// @dev Sets L2 staking processor address and zero-s the owner.
