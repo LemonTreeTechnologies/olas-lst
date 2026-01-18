@@ -1,18 +1,9 @@
 #!/bin/bash
 
-# Deploy StakingManager
-#./scripts/deployment/deploy_l2_05_staking_manager.sh $1
-
 # Check if $1 is provided
 if [ -z "$1" ]; then
   echo "Usage: $0 <network>"
   echo "Example: $0 base_mainnet"
-  exit 1
-fi
-
-# check if the ETHERSCAN_API_KEY is set
-if [ -z "$ETHERSCAN_API_KEY" ]; then
-  echo "Please set the ETHERSCAN_API_KEY environment variable."
   exit 1
 fi
 
@@ -33,8 +24,11 @@ derivationPath=$(jq -r '.derivationPath' $globals)
 chainId=$(jq -r '.chainId' $globals)
 networkURL=$(jq -r '.networkURL' $globals)
 
-stakingManagerAddress=$(jq -r '.stakingManagerAddress' $globals)
-stakingManagerProxyAddress=$(jq -r '.stakingManagerProxyAddress' $globals)
+# Get network name from network_mainnet or network_sepolia or another testnet
+network=${1%_*}
+
+externalStakingDistributorProxyAddress=$(jq -r ".externalStakingDistributorProxyAddress" $globals)
+multisigGuardProxyAddress=$(jq -r ".multisigGuardProxyAddress" $globals)
 
 # Check for Polygon keys only since on other networks those are not needed
 if [ $chainId == 137 ]; then
@@ -61,9 +55,10 @@ else
   deployer=$(cast wallet address $walletArgs)
 fi
 
-echo "${green}Updating StakingManager implementation in StakingManagerProxy${reset}"
 castSendHeader="cast send --rpc-url $networkURL$API_KEY $walletArgs"
-castArgs="$stakingManagerProxyAddress changeImplementation(address) $stakingManagerAddress"
+
+echo "${green}Change MultisigGuardProxy in ExternalStakingDistributorProxy${reset}"
+castArgs="$externalStakingDistributorProxyAddress changeMultisigGuard(address) $multisigGuardProxyAddress"
 echo $castArgs
 castCmd="$castSendHeader $castArgs"
 result=$($castCmd)

@@ -1,7 +1,7 @@
 #!/bin/bash
 
-# Deploy StakingManager
-#./scripts/deployment/deploy_l2_05_staking_manager.sh $1
+# Deploy Collector
+#./scripts/deployment/deploy_l2_01_collector.sh $1
 
 # Check if $1 is provided
 if [ -z "$1" ]; then
@@ -33,8 +33,8 @@ derivationPath=$(jq -r '.derivationPath' $globals)
 chainId=$(jq -r '.chainId' $globals)
 networkURL=$(jq -r '.networkURL' $globals)
 
-stakingManagerAddress=$(jq -r '.stakingManagerAddress' $globals)
-stakingManagerProxyAddress=$(jq -r '.stakingManagerProxyAddress' $globals)
+collectorAddress=$(jq -r '.collectorAddress' $globals)
+collectorProxyAddress=$(jq -r '.collectorProxyAddress' $globals)
 
 # Check for Polygon keys only since on other networks those are not needed
 if [ $chainId == 137 ]; then
@@ -61,9 +61,9 @@ else
   deployer=$(cast wallet address $walletArgs)
 fi
 
-echo "${green}Updating StakingManager implementation in StakingManagerProxy${reset}"
+echo "${green}Updating Collector implementation in CollectorProxy${reset}"
 castSendHeader="cast send --rpc-url $networkURL$API_KEY $walletArgs"
-castArgs="$stakingManagerProxyAddress changeImplementation(address) $stakingManagerAddress"
+castArgs="$collectorProxyAddress changeImplementation(address) $collectorAddress"
 echo $castArgs
 castCmd="$castSendHeader $castArgs"
 result=$($castCmd)

@@ -42,11 +42,11 @@
   "stakingHelperAddress": "0x76097aAeD1FA84e645E8AC71160542347476404D",
   "stakingTokenLockedAddress": "0x9fFC6B45568Dfb1A6a0d9577c6985B4B7cD46701",
   "moduleActivityCheckerAddress": "0xcfA10d192c3999b5CA59aD3c7512c40f1B919e01",
-  "collectorAddress": "0xC6d6b164d81AeE4fCe59D7c74a4e857ac29bc398",
+  "collectorAddress": "0xC15fb64fad8874e440e25c47da12D7a65b83d229",
   "collectorProxyAddress": "0x64003846B67D66AfdFb03325fa4292b76FCF182F",
   "activityModuleAddress": "0x14c85A5A21a26542B672eD53e80e3EEf4cE9394D",
   "beaconAddress": "0xaC7eA9478E0e1186E7D1c82b8d8dc80AEe0F79F6",
-  "stakingManagerAddress": "0xa39B7DdfCb384DE04646e3CC0b7a8f8dC938a120",
+  "stakingManagerAddress": "0x09DF592B2fba0CB859BF01826feA8E96f86E8Ed9",
   "stakingManagerProxyAddress": "0xEfF4A1D9faF5c750d5E32754c40Cf163767C63A4",
   "gnosisStakingProcessorL2Address": "0xDAE0B11e5bF81216283cB95d30039fA3D650eFE3",
   "stakingProxyAddresses": [
