@@ -41,7 +41,7 @@
       {
         "name": "Depository",
         "artifact": "abis/0.8.30/Depository.json",
-        "address": "0x30bA8d28AA309F09613C5e965d0a36A25f9c84b1"
+        "address": "0x0F6571326c86Ac81C86405DC99E7F5d37bEE3FA8"
       },
       {
         "name": "DepositoryProxy",
@@ -51,7 +51,7 @@
       {
         "name": "Treasury",
         "artifact": "abis/0.8.30/Treasury.json",
-        "address": "0x327F1da21255d1d02cF2e7155659F8FBf12dB4ee"
+        "address": "0x5Cb19057b6ACa5d58e6f04056e7AEE58bFF73f29"
       },
       {
         "name": "TreasuryProxy",
@@ -61,7 +61,7 @@
       {
         "name": "GnosisDepositProcessorL1",
         "artifact": "abis/0.8.30/GnosisDepositProcessorL1.json",
-        "address": "0x4A26F79b9dd73a48d57ce4DF70295A875afa006c"
+        "address": "0xeB7613bfbb40fab1DA73DC0b1c16Ec13639C305B"
       },
       {
         "name": "BaseDepositProcessorL1",
@@ -77,7 +77,7 @@
       {
         "name": "Collector",
         "artifact": "abis/0.8.30/Collector.json",
-        "address": "0xC6d6b164d81AeE4fCe59D7c74a4e857ac29bc398"
+        "address": "0xC15fb64fad8874e440e25c47da12D7a65b83d229"
       },
       {
         "name": "CollectorProxy",
@@ -97,7 +97,7 @@
       {
         "name": "StakingManager",
         "artifact": "abis/0.8.30/StakingManager.json",
-        "address": "0x30bA8d28AA309F09613C5e965d0a36A25f9c84b1"
+        "address": "0x09DF592B2fba0CB859BF01826feA8E96f86E8Ed9"
       },
       {
         "name": "StakingManagerProxy",
@@ -107,7 +107,7 @@
       {
         "name": "GnosisStakingProcessorL2",
         "artifact": "abis/0.8.30/GnosisStakingProcessorL2.json",
-        "address": "0x4A26F79b9dd73a48d57ce4DF70295A875afa006c"
+        "address": "0xDAE0B11e5bF81216283cB95d30039fA3D650eFE3"
       },
       {
         "name": "StakingTokenLocked",
@@ -123,6 +123,26 @@
         "name": "StakingHelper",
         "artifact": "abis/0.8.30/StakingHelper.json",
         "address": "0x76097aAeD1FA84e645E8AC71160542347476404D"
+      },
+      {
+        "name": "ExternalStakingDistributor",
+        "artifact": "abis/0.8.30/ExternalStakingDistributor.json",
+        "address": "0x45aE9211E9c3853229e3D865050BA9979296CD36"
+      },
+      {
+        "name": "ExternalStakingDistributorProxy",
+        "artifact": "abis/0.8.30/ExternalStakingDistributorProxy.json",
+        "address": "0x7E8C636FBD0D9085C112680d8C3fde701452dcb5"
+      },
+      {
+        "name": "MultisigGuard",
+        "artifact": "abis/0.8.30/MultisigGuard.json",
+        "address": "0xA26CfDC0e84A04444b6a468c1d1F7191D19541E6"
+      },
+      {
+        "name": "MultisigGuardProxy",
+        "artifact": "abis/0.8.30/MultisigGuardProxy.json",
+        "address": "0xBD645cf2D4F04A1c12B97fe2a8b4A09EF50F1896"
       }
     ]
   }
