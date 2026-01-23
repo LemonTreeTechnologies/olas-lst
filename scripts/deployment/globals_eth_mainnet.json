@@ -30,5 +30,6 @@
   "treasuryProxyAddress": "0xcfA10d192c3999b5CA59aD3c7512c40f1B919e01",
   "gnosisDepositProcessorL1Address": "0xeB7613bfbb40fab1DA73DC0b1c16Ec13639C305B",
   "gnosisStakingProcessorL2Address": "0xDAE0B11e5bF81216283cB95d30039fA3D650eFE3",
-  "baseDepositProcessorL1Address": "0x40abf47B926181148000DbCC7c8DE76A3a61a66f"
+  "baseDepositProcessorL1Address": "0x87AA04e563110DC484bf1580b16986b34987431e",
+  "baseStakingProcessorL2Address": "0xCAF018A23a104095180e298856AC1a415f9831E8"
 }

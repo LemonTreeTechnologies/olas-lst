@@ -36,7 +36,6 @@
   "distributorProxyAddress": "0x64003846B67D66AfdFb03325fa4292b76FCF182F",
   "unstakeRelayerProxyAddress": "0xaC7eA9478E0e1186E7D1c82b8d8dc80AEe0F79F6",
   "treasuryProxyAddress": "0xcfA10d192c3999b5CA59aD3c7512c40f1B919e01",
-  "gnosisDepositProcessorL1Address": "0xeB7613bfbb40fab1DA73DC0b1c16Ec13639C305B",
   "stakingVerifierAddress": "0x1D59DadE4FAeA7771eC7221420012d413175404C",
   "stakingFactoryAddress": "0xb0228CA253A88Bc8eb4ca70BCAC8f87b381f4700",
   "stakingHelperAddress": "0x76097aAeD1FA84e645E8AC71160542347476404D",
@@ -48,12 +47,13 @@
   "beaconAddress": "0xaC7eA9478E0e1186E7D1c82b8d8dc80AEe0F79F6",
   "stakingManagerAddress": "0x09DF592B2fba0CB859BF01826feA8E96f86E8Ed9",
   "stakingManagerProxyAddress": "0xEfF4A1D9faF5c750d5E32754c40Cf163767C63A4",
-  "gnosisStakingProcessorL2Address": "0xDAE0B11e5bF81216283cB95d30039fA3D650eFE3",
   "stakingProxyAddresses": [
     "0x22FA631064A99c43196ec5f8324b73211Ced98f9"
   ],
   "externalStakingDistributorAddress": "0x45aE9211E9c3853229e3D865050BA9979296CD36",
   "externalStakingDistributorProxyAddress": "0x7E8C636FBD0D9085C112680d8C3fde701452dcb5",
   "multisigGuardAddress": "0xA26CfDC0e84A04444b6a468c1d1F7191D19541E6",
-  "multisigGuardProxyAddress": "0xBD645cf2D4F04A1c12B97fe2a8b4A09EF50F1896"
+  "multisigGuardProxyAddress": "0xBD645cf2D4F04A1c12B97fe2a8b4A09EF50F1896",
+  "gnosisDepositProcessorL1Address": "0xeB7613bfbb40fab1DA73DC0b1c16Ec13639C305B",
+  "gnosisStakingProcessorL2Address": "0xDAE0B11e5bF81216283cB95d30039fA3D650eFE3"
 }

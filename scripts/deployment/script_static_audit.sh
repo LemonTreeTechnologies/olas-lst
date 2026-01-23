@@ -37,7 +37,7 @@ networkURLL1=$(jq -r '.networkURL' $globalsL1)
 chainIdL2=$(jq -r '.chainId' $globalsL2)
 networkURLL2=$(jq -r '.networkURL' $globalsL2)
 
-# Get network name from network_mainnet or network_sepolia or another testnet
+# Get network name from network_mainnet or network_testnet
 networkL2=${2%_*}
 
 # Getting L1 API key
@@ -156,9 +156,18 @@ castArgs="$depositoryProxyAddress mapChainIdDepositProcessors(uint256)(address) 
 castCmd="$castCallHeader $castArgs"
 result=$($castCmd)
 if [ $result != $depositProcessorL1Address ]; then
-  echo "${red}!!! stOLAS address is incorrect!${reset}"
+  echo "${red}!!! ${networkL2}DepositProcessorL1 address is incorrect!${reset}"
   echo "${red}!!! Fetched address: $result${reset}"
   echo "${red}!!! Expected address: $depositProcessorL1Address${reset}"
+fi
+# ExternalStakingDistributor
+castArgs="$depositoryProxyAddress mapChainIdStakedExternals(uint256)(uint256) $chainIdL2"
+castCmd="$castCallHeader $castArgs"
+result=$($castCmd)
+if [ $result == 0 ]; then
+  echo "${red}!!! ${networkL2} ExternalStakingDistributor Proxy address is not set!${reset}"
+  echo "${red}!!! Fetched address: $result${reset}"
+  echo "${red}!!! Expected address: $externalStakingDistributorProxyAddress${reset}"
 fi
 # LzOracle
 castArgs="$depositoryProxyAddress lzOracle()(address)"
@@ -173,7 +182,7 @@ fi
 castArgs="$depositoryProxyAddress productType()(uint8)"
 castCmd="$castCallHeader $castArgs"
 result=$($castCmd)
-if [ $result != 0 ]; then
+if [ $result != 1 ]; then
   echo "${red}!!! Product type is incorrect!${reset}"
   echo "${red}!!! Fetched type:$result${reset}"
   echo "${red}!!! Expected type:0${reset}"
