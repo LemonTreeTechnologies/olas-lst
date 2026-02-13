@@ -80,7 +80,8 @@ doc/                       # Documentation and whitepaper
 1. Services are deployed on L2 with OLAS backing
 2. Rewards accumulate based on service performance
 3. ActivityModule verifies service liveness and required KPI performance
-4. Collector gathers rewards and bridges them back to L1 via a Distributor contract
+4. ExternalStakingDistributor curates all external staking and forces unstakes, if required
+5. Collector gathers rewards and bridges them back to L1 via a Distributor contract
 
 ### 3. Withdrawal Process
 1. User requests withdrawal through Treasury
