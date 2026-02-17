@@ -179,7 +179,9 @@ contract ExternalStakingDistributor is Implementation, ERC721TokenReceiver {
     );
     event SetStakingProxyConfigs(address[] stakingProxies, uint256[] proxyTypes);
     event SetManagingAgentStatuses(address[] managingAgents, bool[] statuses);
-    event SetCuratingAgentStatuses(address indexed stakingProposer, address indexed stakingProxy, address[] managingAgents, bool[] statuses);
+    event SetCuratingAgentStatuses(
+        address indexed stakingProposer, address indexed stakingProxy, address[] managingAgents, bool[] statuses
+    );
     event Deposit(address indexed sender, bytes32 indexed operation, uint256 amount);
     event Withdraw(address indexed sender, bytes32 indexed operation, uint256 amount, uint256 unstakeRequestedAmount);
     event Claimed(address[] stakingProxies, uint256[] serviceIds, uint256[] rewards);
@@ -488,7 +490,7 @@ contract ExternalStakingDistributor is Implementation, ERC721TokenReceiver {
         uint256 config = mapStakingProxyConfigs[stakingProxy];
 
         // Unwrap config
-        (,uint256 collectorAmount, uint256 protocolAmount,, StakingType stakingType) = unwrapStakingConfig(config);
+        (, uint256 collectorAmount, uint256 protocolAmount,, StakingType stakingType) = unwrapStakingConfig(config);
 
         // Calculate reward distribution
         collectorAmount = (reward * collectorAmount) / MAX_REWARD_FACTOR;
@@ -783,8 +785,12 @@ contract ExternalStakingDistributor is Implementation, ERC721TokenReceiver {
             }
 
             // Check proxy configs
-            (address stakingProposer, uint256 collectorRewardFactor, uint256 protocolRewardFactor, uint256 curatingAgentRewardFactor,) =
-                unwrapStakingConfig(configs[i]);
+            (
+                address stakingProposer,
+                uint256 collectorRewardFactor,
+                uint256 protocolRewardFactor,
+                uint256 curatingAgentRewardFactor,
+            ) = unwrapStakingConfig(configs[i]);
 
             // Check for collector and zero value
             if (collectorRewardFactor == 0) {
