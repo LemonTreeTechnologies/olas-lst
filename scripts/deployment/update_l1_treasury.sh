@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Deploy Treasury
-./scripts/deployment/deploy_l1_10_treasury.sh $1
+#./scripts/deployment/deploy_l1_10_treasury.sh $1
 
 # Check if $1 is provided
 if [ -z "$1" ]; then

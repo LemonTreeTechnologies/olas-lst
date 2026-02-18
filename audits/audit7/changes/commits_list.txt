@@ -1,0 +1,14 @@
+2d32914 chore: formatting
+9cbc275 chore: formatting
+b6f8266 test: fix tests
+9e9373d test: fix tests
+63d9523 Fix forge tes
+fb7073e refactor: external staking
+d6e00be refactor: external staking
+ace7cf7 refactor: external staking
+ca8e3e2 refactor: external staking
+612fe35 refactor: external staking
+66da459 doc: architecture diagram update
+23756d9 doc: architecture diagram update
+c6c7e2a refactor: external staking
+a20e6d7 feat: initial stake external implementation

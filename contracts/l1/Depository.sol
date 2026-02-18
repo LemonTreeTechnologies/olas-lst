@@ -65,6 +65,13 @@ error WrongStakingModel(uint256 stakingModelId);
 /// @param account Account address.
 error UnauthorizedAccount(address account);
 
+/// @dev Failure of a transfer.
+/// @param token Address of a token.
+/// @param from Address `from`.
+/// @param to Address `to`.
+/// @param amount Token amount.
+error TransferFailed(address token, address from, address to, uint256 amount);
+
 /// @dev Caught reentrancy violation.
 error ReentrancyGuard();
 
@@ -117,11 +124,24 @@ contract Depository is Implementation {
     );
     event Unstake(address indexed sender, uint256[] chainIds, address[] stakingProxies, uint256[] amounts);
     event Retired(uint256[] chainIds, address[] stakingProxies);
+    event SetExternalStakingDistributorChainIds(uint256[] chainIds, address[] externalStakingDistributors);
+    event DepositExternal(
+        address indexed sender, uint256[] chainIds, address[] externalStakingDistributors, uint256[] amounts
+    );
+    event UnstakeExternal(
+        address indexed sender,
+        uint256[] chainIds,
+        address[] externalStakingDistributors,
+        uint256[] amounts,
+        bytes32 operation
+    );
+    event ValueRefunded(address indexed sender, uint256 refund, bool success);
+    event Drained(address indexed sender, address indexed receiver, uint256 amount);
     event DepositoryPaused();
     event DepositoryUnpaused();
 
     // Depository version
-    string public constant VERSION = "0.1.0";
+    string public constant VERSION = "0.2.0";
     // Stake operation
     bytes32 public constant STAKE = 0x1bcc0f4c3fad314e585165815f94ecca9b96690a26d6417d7876448a9a867a69;
     // Unstake operation
@@ -159,6 +179,9 @@ contract Depository is Implementation {
     mapping(address => uint256) public mapAccountDeposits;
     // Mapping for account => withdraw amounts
     mapping(address => uint256) public mapAccountWithdraws;
+
+    // Mapping for chain Id => (amount deposited | address of external staking distributor)
+    mapping(uint256 => uint256) public mapChainIdStakedExternals;
 
     /// @dev Depository constructor.
     /// @param _olas OLAS address.
@@ -256,9 +279,14 @@ contract Depository is Implementation {
         bytes32 operation,
         address sender
     ) internal {
+        uint256 totalSumValues;
+
         // Traverse all array elements
         for (uint256 i = 0; i < chainIds.length; ++i) {
             if (amounts[i] == 0) continue;
+
+            // Add to total sum values
+            totalSumValues += values[i];
 
             // Get corresponding deposit processor
             address depositProcessor = mapChainIdDepositProcessors[chainIds[i]];
@@ -271,6 +299,7 @@ contract Depository is Implementation {
             // Stake related only
             if (operation == STAKE) {
                 // Transfer OLAS to depositProcessor
+                // Transfer is safe because depositProcessor for msg.sender being Depository contract
                 IToken(olas).transfer(depositProcessor, amounts[i]);
             }
 
@@ -278,6 +307,23 @@ contract Depository is Implementation {
             IDepositProcessor(depositProcessor).sendMessage{value: values[i]}(
                 stakingProxies[i], amounts[i], bridgePayloads[i], operation, sender
             );
+        }
+
+        // Check for sum of values
+        if (totalSumValues > msg.value) {
+            revert Overflow(totalSumValues, msg.value);
+        }
+
+        // Calculate excessive value
+        uint256 refund = msg.value - totalSumValues;
+
+        // Check for refund value
+        if (refund > 0) {
+            // If the call fails, ignore to avoid the attack that would prevent this function from executing
+            // solhint-disable-next-line avoid-low-level-calls
+            (bool success,) = msg.sender.call{value: refund}("");
+
+            emit ValueRefunded(sender, refund, success);
         }
     }
 
@@ -646,6 +692,9 @@ contract Depository is Implementation {
             revert UnauthorizedAccount(msg.sender);
         }
 
+        // Increase total account unstake amount
+        mapAccountWithdraws[sender] += unstakeAmount;
+
         // Check array lengths
         if (
             chainIds.length == 0 || chainIds.length != stakingProxies.length || chainIds.length != bridgePayloads.length
@@ -699,7 +748,7 @@ contract Depository is Implementation {
         // Request unstake via relevant deposit processors
         _operationSendMessage(chainIds, stakingProxies, amounts, bridgePayloads, values, UNSTAKE, sender);
 
-        emit Unstake(msg.sender, chainIds, stakingProxies, amounts);
+        emit Unstake(sender, chainIds, stakingProxies, amounts);
     }
 
     /// @dev Calculates amounts and initiates cross-chain unstake request for specified retired models.
@@ -806,6 +855,251 @@ contract Depository is Implementation {
         }
 
         emit Retired(chainIds, stakingProxies);
+    }
+
+    /// @dev Sets external staking distributor contract addresses and their corresponding L2 chain Ids.
+    /// @notice Overwriting existing staking distributor addresses is only possible if their balances are zero.
+    /// @param chainIds Set of L2 chain Ids.
+    /// @param externalStakingDistributors Corresponding set of external staking distributor contract addresses on L2.
+    function setExternalStakingDistributorChainIds(
+        uint256[] memory chainIds,
+        address[] memory externalStakingDistributors
+    ) external {
+        // Check for the ownership
+        if (msg.sender != owner) {
+            revert OwnerOnly(msg.sender, owner);
+        }
+
+        // Check for array length correctness
+        if (externalStakingDistributors.length == 0 || externalStakingDistributors.length != chainIds.length) {
+            revert WrongArrayLength();
+        }
+
+        // Link external staking distributors and chain Ids
+        for (uint256 i = 0; i < chainIds.length; ++i) {
+            // Check supported chain Ids on L2
+            if (chainIds[i] == 0) {
+                revert ZeroValue();
+            }
+
+            // Check for zero address
+            if (externalStakingDistributors[i] == address(0)) {
+                revert ZeroAddress();
+            }
+
+            // Get external staking distributor amount
+            uint256 stakedExternalAmount = mapChainIdStakedExternals[chainIds[i]] >> 160;
+            // Check for external staking distributor amount that must be equal to zero
+            if (stakedExternalAmount > 0) {
+                revert Overflow(stakedExternalAmount, 0);
+            }
+
+            // Note: externalStakingDistributors[i] might be zero if there is a need to stop processing a specific L2 chain Id
+            mapChainIdStakedExternals[chainIds[i]] = uint256(uint160(externalStakingDistributors[i]));
+        }
+
+        emit SetExternalStakingDistributorChainIds(chainIds, externalStakingDistributors);
+    }
+
+    /// @dev Initiates cross-chain stake request for external staking distributors by owner.
+    /// @notice It is solely caller responsibility not to run out of gas when calling this function.
+    ///         Subject to gas estimation as the number of array elements is proportional to gas usage increase.
+    /// @param chainIds Set of chain Ids with external staking distributors.
+    /// @param amounts Set of unstake amounts requested from external staking on each corresponding chain Id.
+    /// @param bridgePayloads Bridge payloads corresponding to each chain Id.
+    /// @param values Value amounts for each bridge interaction, if applicable.
+    function depositExternal(
+        uint256[] memory chainIds,
+        uint256[] memory amounts,
+        bytes[] memory bridgePayloads,
+        uint256[] memory values
+    ) external payable {
+        // Reentrancy guard
+        if (_locked) {
+            revert ReentrancyGuard();
+        }
+        _locked = true;
+
+        // Check for owner access
+        if (msg.sender != owner) {
+            revert UnauthorizedAccount(msg.sender);
+        }
+
+        // Check array lengths
+        if (
+            chainIds.length == 0 || chainIds.length != amounts.length || chainIds.length != bridgePayloads.length
+                || chainIds.length != values.length
+        ) {
+            revert WrongArrayLength();
+        }
+
+        address[] memory externalStakingDistributors = new address[](chainIds.length);
+        uint256[] memory localStakedExternals = new uint256[](chainIds.length);
+        uint256 totalAmount;
+
+        uint256 lastChainId;
+        // Traverse all chain Ids
+        for (uint256 i = 0; i < chainIds.length; ++i) {
+            // Check chain Ids for increasing order
+            if (lastChainId >= chainIds[i]) {
+                revert Overflow(lastChainId, chainIds[i]);
+            }
+            lastChainId = chainIds[i];
+
+            // Get external staking distributor data: (amount deposited | address of external staking distributor)
+            uint256 stakedExternal = mapChainIdStakedExternals[chainIds[i]];
+            (localStakedExternals[i], externalStakingDistributors[i]) =
+            ((stakedExternal >> 160), address(uint160(stakedExternal)));
+
+            // This should never happen
+            if (externalStakingDistributors[i] == address(0)) {
+                revert ZeroAddress();
+            }
+
+            // Update external deposited amounts
+            localStakedExternals[i] += amounts[i];
+            totalAmount += amounts[i];
+
+            // Update staked external amount
+            mapChainIdStakedExternals[chainIds[i]] =
+                uint256(uint160(externalStakingDistributors[i])) | (localStakedExternals[i] << 160);
+        }
+
+        // Get actual stOLAS reserve balance
+        uint256 stReserveBalance = IST(st).reserveBalance();
+
+        // Check if reserve balance has requested amount
+        if (totalAmount > stReserveBalance) {
+            revert Overflow(totalAmount, stReserveBalance);
+        }
+
+        // Adjust reserve balance
+        stReserveBalance -= totalAmount;
+
+        // Pull required funds from stOLAS and record correct balances
+        IST(st).syncStakeBalances(stReserveBalance, totalAmount, totalAmount, false);
+
+        // Send funds to external staking distributors via relevant deposit processors
+        _operationSendMessage(chainIds, externalStakingDistributors, amounts, bridgePayloads, values, STAKE, msg.sender);
+
+        emit DepositExternal(msg.sender, chainIds, externalStakingDistributors, amounts);
+    }
+
+    /// @dev Initiates cross-chain unstake request on external staking distributors by Treasury or owner.
+    /// @notice 1. By Treasury: deducts reserves from their staked part and get them back as vault assets.
+    ///         2. By owner: deducts reserves from their staked part and get them back as assets reserved for staking.
+    /// @notice It is solely caller responsibility not to run out of gas when calling this function.
+    ///         Subject to gas estimation as the number of array elements is proportional to gas usage increase.
+    /// @param chainIds Set of chain Ids with external staking distributors.
+    /// @param amounts Set of unstake amounts requested from external staking on each corresponding chain Id.
+    /// @param bridgePayloads Bridge payloads corresponding to each chain Id.
+    /// @param values Value amounts for each bridge interaction, if applicable.
+    /// @param sender Sender account.
+    function unstakeExternal(
+        uint256[] memory chainIds,
+        uint256[] memory amounts,
+        bytes[] memory bridgePayloads,
+        uint256[] memory values,
+        address sender
+    ) external payable {
+        // Reentrancy guard
+        if (_locked) {
+            revert ReentrancyGuard();
+        }
+        _locked = true;
+
+        bytes32 operation;
+        // Check for proper access: treasury is able to UNSTAKE only, owner is able to UNSTAKE_RETIRED only
+        if (msg.sender == treasury) {
+            operation = UNSTAKE;
+        } else if (msg.sender == owner) {
+            sender = msg.sender;
+            operation = UNSTAKE_RETIRED;
+        } else {
+            revert UnauthorizedAccount(msg.sender);
+        }
+
+        // Check array lengths
+        if (
+            chainIds.length == 0 || chainIds.length != amounts.length || chainIds.length != bridgePayloads.length
+                || chainIds.length != values.length
+        ) {
+            revert WrongArrayLength();
+        }
+
+        // Allocate arrays
+        address[] memory externalStakingDistributors = new address[](chainIds.length);
+        uint256[] memory localStakedExternals = new uint256[](chainIds.length);
+
+        uint256 unstakeAmount;
+
+        uint256 lastChainId;
+        // Traverse all chain Ids
+        for (uint256 i = 0; i < chainIds.length; ++i) {
+            // Check chain Ids for increasing order
+            if (lastChainId >= chainIds[i]) {
+                revert Overflow(lastChainId, chainIds[i]);
+            }
+            lastChainId = chainIds[i];
+
+            // Get external staking distributor data: (amount deposited | address of external staking distributor)
+            uint256 stakedExternal = mapChainIdStakedExternals[chainIds[i]];
+            (localStakedExternals[i], externalStakingDistributors[i]) =
+            ((stakedExternal >> 160), address(uint160(stakedExternal)));
+
+            // This should never happen
+            if (externalStakingDistributors[i] == address(0)) {
+                revert ZeroAddress();
+            }
+
+            // Check for allowed L2 deposits
+            if (amounts[i] > localStakedExternals[i]) {
+                revert Overflow(amounts[i], localStakedExternals[i]);
+            }
+
+            // Update external deposited amounts
+            localStakedExternals[i] -= amounts[i];
+
+            // Accumulate total unstake amount
+            unstakeAmount += amounts[i];
+
+            // Update staked external amount
+            mapChainIdStakedExternals[chainIds[i]] =
+                uint256(uint160(externalStakingDistributors[i])) | (localStakedExternals[i] << 160);
+        }
+
+        if (operation == UNSTAKE) {
+            // Increase total account unstake amount
+            mapAccountWithdraws[sender] += unstakeAmount;
+        }
+
+        // Request unstake or unstake retired from external staking distributors via relevant deposit processors
+        _operationSendMessage(chainIds, externalStakingDistributors, amounts, bridgePayloads, values, operation, sender);
+
+        emit UnstakeExternal(sender, chainIds, externalStakingDistributors, amounts, operation);
+    }
+
+    /// @dev Drains possible stuck values.
+    function drain() external {
+        // Get owner address: it cannot be zero because the proxy is already initialized
+        address localOwner = owner;
+
+        // Get contract value balance
+        uint256 amount = address(this).balance;
+
+        // Check for zero value
+        if (amount == 0) {
+            revert ZeroValue();
+        }
+
+        // solhint-disable-next-line avoid-low-level-calls
+        (bool success,) = localOwner.call{value: amount}("");
+
+        if (!success) {
+            revert TransferFailed(address(0), address(this), localOwner, amount);
+        }
+
+        emit Drained(msg.sender, localOwner, amount);
     }
 
     /// @dev Pauses contract.

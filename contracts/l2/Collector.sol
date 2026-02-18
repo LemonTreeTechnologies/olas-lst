@@ -9,6 +9,12 @@ interface IBridge {
 
 // ERC20 token interface
 interface IToken {
+    /// @dev Sets `amount` as the allowance of `spender` over the caller's tokens.
+    /// @param spender Account address that will be able to transfer tokens on behalf of the caller.
+    /// @param amount Token amount.
+    /// @return True if the function execution is successful.
+    function approve(address spender, uint256 amount) external returns (bool);
+
     /// @dev Transfers the token amount.
     /// @param to Address to transfer to.
     /// @param amount The amount to transfer.
@@ -21,11 +27,6 @@ interface IToken {
     /// @param amount Amount to transfer to.
     /// @return True if the function execution is successful.
     function transferFrom(address from, address to, uint256 amount) external returns (bool);
-
-    /// @dev Gets the amount of tokens owned by a specified account.
-    /// @param account Account address.
-    /// @return Amount of tokens owned.
-    function balanceOf(address account) external view returns (uint256);
 }
 
 /// @dev Zero value.
@@ -185,6 +186,27 @@ contract Collector is Implementation {
         emit OperationReceiversSet(operations, receivers);
     }
 
+    /// @dev Tops up address(this) with a specified amount for protocol assets.
+    /// @param amount OLAS amount.
+    function topUpProtocol(uint256 amount) external {
+        // Reentrancy guard
+        if (_locked == 2) {
+            revert ReentrancyGuard();
+        }
+        _locked = 2;
+
+        // Pull OLAS amount
+        IToken(olas).transferFrom(msg.sender, address(this), amount);
+
+        // Update protocol balance
+        uint256 curProtocolBalance = protocolBalance + amount;
+        protocolBalance = curProtocolBalance;
+
+        emit ProtocolBalanceUpdated(curProtocolBalance);
+
+        _locked = 1;
+    }
+
     /// @dev Tops up address(this) with a specified amount according to a selected operation.
     /// @param amount OLAS amount.
     /// @param operation Operation type.
@@ -338,8 +360,8 @@ contract Collector is Implementation {
 
         emit TokensRelayed(receiver, olasBalance);
 
-        // Transfer tokens
-        IToken(olas).transfer(l2StakingProcessor, olasBalance);
+        // Approve tokens for staking processor
+        IToken(olas).approve(l2StakingProcessor, olasBalance);
 
         // Send tokens to L1
         IBridge(l2StakingProcessor).relayToL1{value: msg.value}(receiver, olasBalance, bridgePayload);
@@ -347,6 +369,9 @@ contract Collector is Implementation {
         _locked = 1;
     }
 
+    /// @dev Funds external address.
+    /// @param account Account address.
+    /// @param amount Amount value.
     function fundExternal(address account, uint256 amount) external {
         // Reentrancy guard
         if (_locked == 2) {

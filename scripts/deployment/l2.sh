@@ -20,8 +20,23 @@ set -euo pipefail
 # Deploy StakingManager Proxy
 ./scripts/deployment/deploy_l2_06_staking_manager_proxy.sh $1
 
-# Fund StakingManagerProxy
-./scripts/deployment/script_l2_01_fund_staking_manager.sh $1
+# Deploy ExternalStakingDistributor
+./scripts/deployment/deploy_l2_12_external_staking_distributor.sh $1
+
+# Deploy ExternalStakingDistributor Proxy
+./scripts/deployment/deploy_l2_13_external_staking_distributor_proxy.sh $1
+
+# Fund StakingManager Proxy and ExternalStakingDistributor Proxy
+./scripts/deployment/script_l2_01_fund_staking_managers.sh $1
+
+# Deploy MultisigGuard
+./scripts/deployment/deploy_l2_14_multisig_guard.sh $1
+
+# Deploy MultisigGuard Proxy
+./scripts/deployment/deploy_l2_14_multisig_guard_proxy.sh $1
+
+# Change MultisigGuardProxy in ExternalStakingDistributorProxy
+./scripts/deployment/script_l2_09_change_multisig_guard.sh $1
 
 # Deploy ModuleActivityChecker
 ./scripts/deployment/deploy_l2_07_module_activity_checker.sh $1
@@ -37,7 +52,7 @@ set -euo pipefail
 # Deploy BaseStakingProcessorL2
 #./scripts/deployment/deploy_l2_10_base_staking_processor.sh $1
 
-# Change staking processors in CollectorProxy and StakingManagerProxy
+# Change staking processors in CollectorProxy, StakingManagerProxy, ExternalStakingDistributor
 ./scripts/deployment/script_l2_02_change_staking_processors.sh $1
 
 # Set operation receivers in Collector

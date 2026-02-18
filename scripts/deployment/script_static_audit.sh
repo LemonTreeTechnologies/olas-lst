@@ -37,7 +37,7 @@ networkURLL1=$(jq -r '.networkURL' $globalsL1)
 chainIdL2=$(jq -r '.chainId' $globalsL2)
 networkURLL2=$(jq -r '.networkURL' $globalsL2)
 
-# Get network name from network_mainnet or network_sepolia or another testnet
+# Get network name from network_mainnet or network_testnet
 networkL2=${2%_*}
 
 # Getting L1 API key
@@ -72,7 +72,13 @@ depositProcessorL1Address=$(jq -r ".${networkL2}DepositProcessorL1Address" $glob
 olasAddressL2=$(jq -r ".olasAddress" $globalsL2)
 collectorProxyAddress=$(jq -r ".collectorProxyAddress" $globalsL2)
 stakingManagerProxyAddress=$(jq -r ".stakingManagerProxyAddress" $globalsL2)
+externalStakingDistributorProxyAddress=$(jq -r ".externalStakingDistributorProxyAddress" $globalsL2)
 stakingProcessorL2Address=$(jq -r ".${networkL2}StakingProcessorL2Address" $globalsL2)
+serviceManagerProxyAddress=$(jq -r ".serviceManagerProxyAddress" $globalsL2)
+safeMultisigWithRecoveryModuleAddress=$(jq -r ".safeMultisigWithRecoveryModuleAddress" $globalsL2)
+gnosisSafeSameAddressMultisigImplementationAddress=$(jq -r ".gnosisSafeSameAddressMultisigImplementationAddress" $globalsL2)
+fallbackHandlerAddress=$(jq -r ".fallbackHandlerAddress" $globalsL2)
+multiSendCallOnlyAddress=$(jq -r ".multiSendCallOnlyAddress" $globalsL2)
 
 addressZero=$(cast address-zero)
 castCallHeader="cast call --rpc-url $networkURLL1$API_KEY"
@@ -145,6 +151,24 @@ if [ $result != $stOLASAddress ]; then
   echo "${red}!!! Fetched address: $result${reset}"
   echo "${red}!!! Expected address: $stOLASAddress${reset}"
 fi
+# DepositProcessorL1
+castArgs="$depositoryProxyAddress mapChainIdDepositProcessors(uint256)(address) $chainIdL2"
+castCmd="$castCallHeader $castArgs"
+result=$($castCmd)
+if [ $result != $depositProcessorL1Address ]; then
+  echo "${red}!!! ${networkL2}DepositProcessorL1 address is incorrect!${reset}"
+  echo "${red}!!! Fetched address: $result${reset}"
+  echo "${red}!!! Expected address: $depositProcessorL1Address${reset}"
+fi
+# ExternalStakingDistributor
+castArgs="$depositoryProxyAddress mapChainIdStakedExternals(uint256)(uint256) $chainIdL2"
+castCmd="$castCallHeader $castArgs"
+result=$($castCmd)
+if [ $result == 0 ]; then
+  echo "${red}!!! ${networkL2} ExternalStakingDistributor Proxy address is not set!${reset}"
+  echo "${red}!!! Fetched address: $result${reset}"
+  echo "${red}!!! Expected address: $externalStakingDistributorProxyAddress${reset}"
+fi
 # LzOracle
 castArgs="$depositoryProxyAddress lzOracle()(address)"
 castCmd="$castCallHeader $castArgs"
@@ -158,7 +182,7 @@ fi
 castArgs="$depositoryProxyAddress productType()(uint8)"
 castCmd="$castCallHeader $castArgs"
 result=$($castCmd)
-if [ $result != 0 ]; then
+if [ $result != 1 ]; then
   echo "${red}!!! Product type is incorrect!${reset}"
   echo "${red}!!! Fetched type:$result${reset}"
   echo "${red}!!! Expected type:0${reset}"
@@ -197,6 +221,7 @@ fi
 castArgs="$treasuryProxyAddress withdrawDelay()(uint256)"
 castCmd="$castCallHeader $castArgs"
 result=$($castCmd)
+#echo $result
 if [ $result == 0 ]; then
   echo "${red}!!! withdrawDelay is incorrect!${reset}"
   echo "${red}!!! Fetched: $result${reset}"
@@ -436,6 +461,89 @@ if [ $result == 0 ]; then
 fi
 
 
+echo "${green}Checking ExternalStakingDistributor${reset}"
+# OLAS
+castArgs="$externalStakingDistributorProxyAddress olas()(address)"
+castCmd="$castCallHeader $castArgs"
+result=$($castCmd)
+if [ $result != $olasAddressL2 ]; then
+  echo "${red}!!! OLAS address is incorrect!${reset}"
+  echo "${red}!!! Fetched address: $result${reset}"
+  echo "${red}!!! Expected address: $olasAddressL2${reset}"
+fi
+# ServiceManager
+castArgs="$externalStakingDistributorProxyAddress serviceManager()(address)"
+castCmd="$castCallHeader $castArgs"
+result=$($castCmd)
+if [ $result != $serviceManagerProxyAddress ]; then
+  echo "${red}!!! Collector address is incorrect!${reset}"
+  echo "${red}!!! Fetched address: $result${reset}"
+  echo "${red}!!! Expected address: $serviceManagerProxyAddress${reset}"
+fi
+# SafeMultisigWithRecoveryModule
+castArgs="$externalStakingDistributorProxyAddress safeMultisigWithRecoveryModule()(address)"
+castCmd="$castCallHeader $castArgs"
+result=$($castCmd)
+if [ $result != $safeMultisigWithRecoveryModuleAddress ]; then
+  echo "${red}!!! Collector address is incorrect!${reset}"
+  echo "${red}!!! Fetched address: $result${reset}"
+  echo "${red}!!! Expected address: $safeMultisigWithRecoveryModuleAddress${reset}"
+fi
+# SafeSameAddressMultisig
+castArgs="$externalStakingDistributorProxyAddress safeSameAddressMultisig()(address)"
+castCmd="$castCallHeader $castArgs"
+result=$($castCmd)
+if [ $result != $gnosisSafeSameAddressMultisigImplementationAddress ]; then
+  echo "${red}!!! Collector address is incorrect!${reset}"
+  echo "${red}!!! Fetched address: $result${reset}"
+  echo "${red}!!! Expected address: $gnosisSafeSameAddressMultisigImplementationAddress${reset}"
+fi
+# FallbackHandler
+castArgs="$externalStakingDistributorProxyAddress fallbackHandler()(address)"
+castCmd="$castCallHeader $castArgs"
+result=$($castCmd)
+if [ $result != $fallbackHandlerAddress ]; then
+  echo "${red}!!! Collector address is incorrect!${reset}"
+  echo "${red}!!! Fetched address: $result${reset}"
+  echo "${red}!!! Expected address: $fallbackHandlerAddress${reset}"
+fi
+# MultiSendCallOnly
+castArgs="$externalStakingDistributorProxyAddress multiSend()(address)"
+castCmd="$castCallHeader $castArgs"
+result=$($castCmd)
+if [ $result != $multiSendCallOnlyAddress ]; then
+  echo "${red}!!! Collector address is incorrect!${reset}"
+  echo "${red}!!! Fetched address: $result${reset}"
+  echo "${red}!!! Expected address: $multiSendCallOnlyAddress${reset}"
+fi
+# l2StakingProcessor
+castArgs="$externalStakingDistributorProxyAddress l2StakingProcessor()(address)"
+castCmd="$castCallHeader $castArgs"
+result=$($castCmd)
+if [ $result != $stakingProcessorL2Address ]; then
+  echo "${red}!!! l2StakingProcessor address is incorrect!${reset}"
+  echo "${red}!!! Fetched address: $result${reset}"
+  echo "${red}!!! Expected address: $stakingProcessorL2Address${reset}"
+fi
+# Collector
+castArgs="$externalStakingDistributorProxyAddress collector()(address)"
+castCmd="$castCallHeader $castArgs"
+result=$($castCmd)
+if [ $result != $collectorProxyAddress ]; then
+  echo "${red}!!! Collector address is incorrect!${reset}"
+  echo "${red}!!! Fetched address: $result${reset}"
+  echo "${red}!!! Expected address: $collectorProxyAddress${reset}"
+fi
+# Balance in wei
+castCmd="cast call --rpc-url $networkURLL2 $externalStakingDistributorProxyAddress"
+result=$($castCmd)
+if [ $result == 0 ]; then
+  echo "${red}!!! Balance is incorrect!${reset}"
+  echo "${red}!!! Fetched: $result${reset}"
+  echo "${red}!!! Expected: > 0${reset}"
+fi
+
+
 echo "${green}Checking ${networkL2}StakingProcessorL2${reset}"
 # OLAS
 castArgs="$stakingProcessorL2Address olas()(address)"
@@ -454,6 +562,15 @@ if [ $result != $stakingManagerProxyAddress ]; then
   echo "${red}!!! StakingManager address is incorrect!${reset}"
   echo "${red}!!! Fetched address: $result${reset}"
   echo "${red}!!! Expected address: $stakingManagerProxyAddress${reset}"
+fi
+# ExternalStakingDistributor
+castArgs="$stakingProcessorL2Address externalStakingDistributor()(address)"
+castCmd="$castCallHeader $castArgs"
+result=$($castCmd)
+if [ $result != $externalStakingDistributorProxyAddress ]; then
+  echo "${red}!!! StakingManager address is incorrect!${reset}"
+  echo "${red}!!! Fetched address: $result${reset}"
+  echo "${red}!!! Expected address: $externalStakingDistributorProxyAddress${reset}"
 fi
 # Collector
 castArgs="$stakingProcessorL2Address collector()(address)"
@@ -481,4 +598,3 @@ fi
 #  echo "${red}!!! owner address is incorrect!${reset}"
 #  echo "${red}!!! Fetched address: $result${reset}"
 #  echo "${red}!!! Expected address: $bridgeMediator${reset}"
-#fi

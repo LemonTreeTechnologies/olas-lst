@@ -125,6 +125,7 @@ module.exports = {
         },
         hardhat: {
             allowUnlimitedContractSize: true,
+            blockGasLimit: 60_000_000,
             mocha: {
                 timeout: 120000,
             }

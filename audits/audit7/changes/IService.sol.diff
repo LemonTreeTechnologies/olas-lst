@@ -1,0 +1,28 @@
+diff --git a/contracts/interfaces/IService.sol b/contracts/interfaces/IService.sol
+index d033a10..1454157 100644
+--- a/contracts/interfaces/IService.sol
++++ b/contracts/interfaces/IService.sol
+@@ -27,6 +27,23 @@ interface IService {
+         uint32 threshold
+     ) external returns (uint256 serviceId);
+ 
++    /// @dev Updates a service in a CRUD way.
++    /// @param token ERC20 token address for the security deposit, or ETH.
++    /// @param configHash IPFS hash pointing to the config metadata.
++    /// @param agentIds Canonical agent Ids.
++    /// @param agentParams Number of agent instances and required bond to register an instance in the service.
++    /// @param threshold Threshold for a multisig composed by agents.
++    /// @param serviceId Service Id to be updated.
++    /// @return success True, if function executed successfully.
++    function update(
++        address token,
++        bytes32 configHash,
++        uint32[] memory agentIds,
++        IService.AgentParams[] memory agentParams,
++        uint32 threshold,
++        uint256 serviceId
++    ) external returns (bool success);
++
+     /// @dev Activates the service and its sensitive components.
+     /// @param serviceId Correspondent service Id.
+     /// @return success True, if function executed successfully.

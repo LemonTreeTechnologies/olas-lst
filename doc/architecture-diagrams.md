@@ -91,16 +91,19 @@ sequenceDiagram
   participant S as Services
   participant BP2 as Bridge (L2)
 
-  %% A) Deposit -> Mint
+  %% A) Deposit -> Mint stOLAS -> STAKE
   U->>D: deposit OLAS
-  D->>V: deposit / topUp
+  D->>V: deposit / topUp OLAS
   V-->>U: mint stOLAS (pps-based)
+  D->>BP1: bridge OLAS + msg (STAKE)
+  BP1->>SM: stake / accumulate OLAS until stake deposit is reached
+  SM->>STL: stake service
 
   %% B) Rewards (REWARD -> Distributor)
-  S->>SM: produce rewards
+  S->>STL: deliver KPIs to produce rewards
   SM->>STL: update accrual
   STL->>Coll: send REWARD op
-  Coll->>BP2: bridge OLAS+msg
+  Coll->>BP2: bridge OLAS
   BP2->>BP1: relay
   BP1->>Dist: deliver OLAS (REWARD)
   Dist->>V: top up vault balance
@@ -113,7 +116,7 @@ sequenceDiagram
     D->>SM: init UNSTAKE
     SM->>STL: process unstake
     STL->>Coll: send UNSTAKE
-    Coll->>BP2: bridge
+    Coll->>BP2: bridge OLAS
     BP2->>BP1: relay
     BP1->>T: deliver OLAS (UNSTAKE)
   end
@@ -121,7 +124,7 @@ sequenceDiagram
 
   %% D) Retired flow (UNSTAKE_RETIRED -> UnstakeRelayer)
   STL->>Coll: send UNSTAKE_RETIRED
-  Coll->>BP2: bridge
+  Coll->>BP2: bridge OLAS
   BP2->>BP1: relay
   BP1->>UR: deliver OLAS (UNSTAKE_RETIRED)
   UR->>V: top up retired balance

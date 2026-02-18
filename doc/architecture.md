@@ -18,7 +18,7 @@ It is meant to accompany `README.md` and serve as a quick reference for develope
 - **`UnstakeRelayer`** — handles returns of permanently closed staking model unstakes; tops up `stOLAS` with retired reserves.
 
 **L2 (Gnosis, Base, etc.):**
-- **`StakingManager` / `StakingTokenLocked`** — staking logic for services, accrual of rewards, initiation of stake and unstake.
+- **`StakingManager` / `ExternalStakingDistributor` / `StakingTokenLocked`** — staking logic for services, accrual of rewards, initiation of stake and unstake.
 - **`Collector`** — bridge intermediary: routes collected tokens back to L1.
 
 **Bridging Processors:**  

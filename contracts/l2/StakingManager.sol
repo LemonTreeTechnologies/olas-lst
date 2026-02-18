@@ -37,21 +37,6 @@ interface IActivityModule {
     function drain() external returns (uint256 balance);
 }
 
-// Bridge interface
-interface IBridge {
-    /// @dev Relays OLAS to L1.
-    /// @param to Address to send tokens to.
-    /// @param olasAmount OLAS amount.
-    function relayToL1(address to, uint256 olasAmount, bytes memory) external payable;
-}
-
-// Multisig interface
-interface IMultisig {
-    /// @dev Returns array of owners.
-    /// @return Array of Safe owners.
-    function getOwners() external view returns (address[] memory);
-}
-
 /// @dev Zero value.
 error ZeroValue();
 
@@ -93,9 +78,9 @@ contract StakingManager is Implementation, ERC721TokenReceiver {
     // Threshold
     uint256 public constant THRESHOLD = 1;
 
-    // Contributor agent Id
+    // LST agent Id
     uint256 public immutable agentId;
-    // Contributor service config hash
+    // LST service config hash
     bytes32 public immutable configHash;
     // Service manager address
     address public immutable serviceManager;
@@ -139,7 +124,7 @@ contract StakingManager is Implementation, ERC721TokenReceiver {
     // Mapping of staking proxy address => last staked service Id index in mapStakedServiceIds corresponding set
     mapping(address => uint256) public mapLastStakedServiceIdxs;
 
-    /// @dev StakerL2 constructor.
+    /// @dev StakingManager constructor.
     /// @param _olas OLAS token address.
     /// @param _serviceManager Service manager address.
     /// @param _stakingFactory Staking factory address.
@@ -147,8 +132,8 @@ contract StakingManager is Implementation, ERC721TokenReceiver {
     /// @param _safeL2 SafeL2 contract address.
     /// @param _beacon Activity module beacon.
     /// @param _collector OLAS collector address.
-    /// @param _agentId Contributor agent Id.
-    /// @param _configHash Contributor service config hash.
+    /// @param _agentId LST agent Id.
+    /// @param _configHash LST service config hash.
     constructor(
         address _olas,
         address _serviceManager,
@@ -208,8 +193,8 @@ contract StakingManager is Implementation, ERC721TokenReceiver {
         owner = msg.sender;
     }
 
-    /// @dev Changes token relayer address.
-    /// @param newStakingProcessorL2 Address of a new owner.
+    /// @dev Changes staking processor L2 address.
+    /// @param newStakingProcessorL2 New staking processor L2 address.
     function changeStakingProcessorL2(address newStakingProcessorL2) external {
         // Check for ownership
         if (msg.sender != owner) {
@@ -445,7 +430,7 @@ contract StakingManager is Implementation, ERC721TokenReceiver {
         } else {
             // This must never happen except for unlikely cases where L2 staking setup does not correspond L1 numbers,
             // or when stake failed and now symmetrical unstakes take place
-            if (mapStakedServiceIds[stakingProxy].length == 0) {
+            if (mapLastStakedServiceIdxs[stakingProxy] == 0) {
                 // Get amount - balance difference
                 uint256 amountDiff = amount - balance;
                 // Amount becomes balance

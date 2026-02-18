@@ -1,0 +1,115 @@
+diff --git a/contracts/l2/bridging/DefaultStakingProcessorL2.sol b/contracts/l2/bridging/DefaultStakingProcessorL2.sol
+index 62ee10f..9a86935 100644
+--- a/contracts/l2/bridging/DefaultStakingProcessorL2.sol
++++ b/contracts/l2/bridging/DefaultStakingProcessorL2.sol
+@@ -29,6 +29,18 @@ interface IStakingManager {
+     function unstake(address stakingProxy, uint256 amount, bytes32 operation) external;
+ }
+ 
++interface IExternalStakingDistributor {
++    /// @dev Deposits OLAS for further staking.
++    /// @param amount OLAS amount.
++    /// @param operation Stake operation type.
++    function deposit(uint256 amount, bytes32 operation) external;
++
++    /// @dev Requests withdraw via specified unstake operation.
++    /// @param amount Unstake amount.
++    /// @param operation Unstake operation type.
++    function withdraw(uint256 amount, bytes32 operation) external;
++}
++
+ // Necessary ERC20 token interface
+ interface IToken {
+     /// @dev Sets `amount` as the allowance of `spender` over the caller's tokens.
+@@ -90,6 +102,8 @@ abstract contract DefaultStakingProcessorL2 is IBridgeErrors {
+     address public immutable olas;
+     // Staking manager address
+     address public immutable stakingManager;
++    // External staking distributor address
++    address public immutable externalStakingDistributor;
+     // Collector address
+     address public immutable collector;
+     // L2 Relayer address that receives the message across the bridge from the source L1 network
+@@ -115,6 +129,7 @@ abstract contract DefaultStakingProcessorL2 is IBridgeErrors {
+     /// @dev DefaultStakerL2 constructor.
+     /// @param _olas OLAS token address on L2.
+     /// @param _stakingManager StakingManager address.
++    /// @param _externalStakingDistributor ExternalStakingDistributor address.
+     /// @param _collector Collector address.
+     /// @param _l2TokenRelayer L2 token relayer bridging contract address.
+     /// @param _l2MessageRelayer L2 message relayer bridging contract address.
+@@ -122,6 +137,7 @@ abstract contract DefaultStakingProcessorL2 is IBridgeErrors {
+     constructor(
+         address _olas,
+         address _stakingManager,
++        address _externalStakingDistributor,
+         address _collector,
+         address _l2TokenRelayer,
+         address _l2MessageRelayer,
+@@ -130,8 +146,9 @@ abstract contract DefaultStakingProcessorL2 is IBridgeErrors {
+     ) {
+         // Check for zero addresses
+         if (
+-            _olas == address(0) || _stakingManager == address(0) || _collector == address(0)
+-                || _l2TokenRelayer == address(0) || _l2MessageRelayer == address(0) || _l1DepositProcessor == address(0)
++            _olas == address(0) || _stakingManager == address(0) || _externalStakingDistributor == address(0)
++                || _collector == address(0) || _l2TokenRelayer == address(0) || _l2MessageRelayer == address(0)
++                || _l1DepositProcessor == address(0)
+         ) {
+             revert ZeroAddress();
+         }
+@@ -149,6 +166,7 @@ abstract contract DefaultStakingProcessorL2 is IBridgeErrors {
+         // Immutable parameters assignment
+         olas = _olas;
+         stakingManager = _stakingManager;
++        externalStakingDistributor = _externalStakingDistributor;
+         collector = _collector;
+         l2TokenRelayer = _l2TokenRelayer;
+         l2MessageRelayer = _l2MessageRelayer;
+@@ -194,12 +212,22 @@ abstract contract DefaultStakingProcessorL2 is IBridgeErrors {
+ 
+                 // Check the OLAS balance and the contract being unpaused
+                 if (olasBalance >= amount) {
+-                    // Approve OLAS for stakingManager
+-                    IToken(olas).approve(stakingManager, amount);
+-
+-                    // This is a low level call since it must never revert
+-                    bytes memory stakeData = abi.encodeCall(IStakingManager.stake, (target, amount, operation));
+-                    (success,) = stakingManager.call(stakeData);
++                    if (target == externalStakingDistributor) {
++                        // Approve OLAS for externalStakingDistributor
++                        IToken(olas).approve(externalStakingDistributor, amount);
++
++                        // This is a low level call since it must never revert
++                        bytes memory stakeData =
++                            abi.encodeCall(IExternalStakingDistributor.deposit, (amount, operation));
++                        (success,) = externalStakingDistributor.call(stakeData);
++                    } else {
++                        // Approve OLAS for stakingManager
++                        IToken(olas).approve(stakingManager, amount);
++
++                        // This is a low level call since it must never revert
++                        bytes memory stakeData = abi.encodeCall(IStakingManager.stake, (target, amount, operation));
++                        (success,) = stakingManager.call(stakeData);
++                    }
+                 } else {
+                     // Insufficient OLAS balance
+                     status = RequestStatus.INSUFFICIENT_OLAS_BALANCE;
+@@ -210,9 +238,14 @@ abstract contract DefaultStakingProcessorL2 is IBridgeErrors {
+             }
+         } else if (operation == UNSTAKE || operation == UNSTAKE_RETIRED) {
+             // Note that if UNSTAKE* is requested, it must be finalized in any case since changes are recorded on L1
+-            // This is a low level call since it must never revert
+-            bytes memory unstakeData = abi.encodeCall(IStakingManager.unstake, (target, amount, operation));
+-            (success,) = stakingManager.call(unstakeData);
++            // These are low level calls since they must never revert
++            if (target == externalStakingDistributor) {
++                bytes memory unstakeData = abi.encodeCall(IExternalStakingDistributor.withdraw, (amount, operation));
++                (success,) = stakingManager.call(unstakeData);
++            } else {
++                bytes memory unstakeData = abi.encodeCall(IStakingManager.unstake, (target, amount, operation));
++                (success,) = stakingManager.call(unstakeData);
++            }
+         } else {
+             // Unsupported operation type
+             status = RequestStatus.UNSUPPORTED_OPERATION_TYPE;

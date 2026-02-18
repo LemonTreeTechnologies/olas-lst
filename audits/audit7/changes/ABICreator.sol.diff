@@ -1,0 +1,14 @@
+diff --git a/contracts/test/ABICreator.sol b/contracts/test/ABICreator.sol
+index be6025d..2f83883 100644
+--- a/contracts/test/ABICreator.sol
++++ b/contracts/test/ABICreator.sol
+@@ -17,6 +17,9 @@ import {ServiceManagerProxy} from "../../lib/autonolas-registries/contracts/Serv
+ import {GnosisSafeMultisig} from "../../lib/autonolas-registries/contracts/multisigs/GnosisSafeMultisig.sol";
+ import {GnosisSafeSameAddressMultisig} from
+     "../../lib/autonolas-registries/contracts/multisigs/GnosisSafeSameAddressMultisig.sol";
++import {RecoveryModule} from "../../lib/autonolas-registries/contracts/multisigs/RecoveryModule.sol";
++import {SafeMultisigWithRecoveryModule} from
++    "../../lib/autonolas-registries/contracts/multisigs/SafeMultisigWithRecoveryModule.sol";
+ import {StakingVerifier} from "../../lib/autonolas-registries/contracts/staking/StakingVerifier.sol";
+ import {StakingFactory} from "../../lib/autonolas-registries/contracts/staking/StakingFactory.sol";
+ import {ERC20Token} from "../../lib/autonolas-registries/contracts/test/ERC20Token.sol";

@@ -29,6 +29,7 @@ network=${1%_*}
 
 collectorProxyAddress=$(jq -r ".collectorProxyAddress" $globals)
 stakingManagerProxyAddress=$(jq -r ".stakingManagerProxyAddress" $globals)
+externalStakingDistributorProxyAddress=$(jq -r ".externalStakingDistributorProxyAddress" $globals)
 stakingProcessorL2Address=$(jq -r ".${network}StakingProcessorL2Address" $globals)
 
 # Check for Polygon keys only since on other networks those are not needed
@@ -74,6 +75,13 @@ echo "$result" | grep "status"
 
 echo "${green}Change Staking Processor L2 in StakingManagerProxy${reset}"
 castArgs="$stakingManagerProxyAddress changeStakingProcessorL2(address) $stakingProcessorL2Address"
+echo $castArgs
+castCmd="$castSendHeader $castArgs"
+result=$($castCmd)
+echo "$result" | grep "status"
+
+echo "${green}Change Staking Processor L2 in ExternalStakingDistributorProxy${reset}"
+castArgs="$externalStakingDistributorProxyAddress changeStakingProcessorL2(address) $stakingProcessorL2Address"
 echo $castArgs
 castCmd="$castSendHeader $castArgs"
 result=$($castCmd)

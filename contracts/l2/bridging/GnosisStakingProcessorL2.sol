@@ -10,6 +10,13 @@ interface IToken {
     /// @param amount Token amount.
     /// @return True if the function execution is successful.
     function approve(address spender, uint256 amount) external returns (bool);
+
+    /// @dev Transfers the token amount that was previously approved up until the maximum allowance.
+    /// @param from Account address to transfer from.
+    /// @param to Account address to transfer to.
+    /// @param amount Amount to transfer to.
+    /// @return True if the function execution is successful.
+    function transferFrom(address from, address to, uint256 amount) external returns (bool);
 }
 
 interface IBridge {
@@ -31,6 +38,7 @@ contract GnosisStakingProcessorL2 is DefaultStakingProcessorL2 {
     /// @dev GnosisTargetDispenserL2 constructor.
     /// @param _olas OLAS token address.
     /// @param _stakingManager StakingManager address.
+    /// @param _externalStakingDistributor ExternalStakingDistributor address.
     /// @param _collector Collector address.
     /// @param _l2TokenRelayer L2 token relayer bridging contract address.
     /// @param _l2MessageRelayer L2 message relayer bridging contract address (AMBHomeProxy).
@@ -39,6 +47,7 @@ contract GnosisStakingProcessorL2 is DefaultStakingProcessorL2 {
     constructor(
         address _olas,
         address _stakingManager,
+        address _externalStakingDistributor,
         address _collector,
         address _l2TokenRelayer,
         address _l2MessageRelayer,
@@ -48,6 +57,7 @@ contract GnosisStakingProcessorL2 is DefaultStakingProcessorL2 {
         DefaultStakingProcessorL2(
             _olas,
             _stakingManager,
+            _externalStakingDistributor,
             _collector,
             _l2TokenRelayer,
             _l2MessageRelayer,
@@ -73,7 +83,11 @@ contract GnosisStakingProcessorL2 is DefaultStakingProcessorL2 {
             revert ZeroValueOnly();
         }
 
+        // Get tokens
+        IToken(olas).transferFrom(msg.sender, address(this), olasAmount);
+        // Approve for bridging
         IToken(olas).approve(l2TokenRelayer, olasAmount);
+        // Bridge tokens
         IBridge(l2TokenRelayer).relayTokens(olas, to, olasAmount);
     }
 }

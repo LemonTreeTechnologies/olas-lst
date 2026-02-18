@@ -1,0 +1,98 @@
+diff --git a/test/LiquidStaking.t.sol b/test/LiquidStaking.t.sol
+index e4e3152..4128dbc 100755
+--- a/test/LiquidStaking.t.sol
++++ b/test/LiquidStaking.t.sol
+@@ -21,6 +21,8 @@ import {ServiceManager} from "@registries/contracts/ServiceManager.sol";
+ import {ServiceManagerProxy} from "@registries/contracts/ServiceManagerProxy.sol";
+ import {GnosisSafeMultisig} from "@registries/contracts/multisigs/GnosisSafeMultisig.sol";
+ import {GnosisSafeSameAddressMultisig} from "@registries/contracts/multisigs/GnosisSafeSameAddressMultisig.sol";
++import {SafeMultisigWithRecoveryModule} from "@registries/contracts/multisigs/SafeMultisigWithRecoveryModule.sol";
++import {RecoveryModule} from "@registries/contracts/multisigs/RecoveryModule.sol";
+ import {StakingVerifier} from "@registries/contracts/staking/StakingVerifier.sol";
+ import {StakingFactory} from "@registries/contracts/staking/StakingFactory.sol";
+ 
+@@ -35,6 +37,7 @@ import {GnosisDepositProcessorL1} from "../contracts/l1/bridging/GnosisDepositPr
+ import {Collector} from "../contracts/l2/Collector.sol";
+ import {ActivityModule} from "../contracts/l2/ActivityModule.sol";
+ import {StakingManager} from "../contracts/l2/StakingManager.sol";
++import {ExternalStakingDistributor} from "../contracts/l2/ExternalStakingDistributor.sol";
+ import {ModuleActivityChecker} from "../contracts/l2/ModuleActivityChecker.sol";
+ import {StakingTokenLocked} from "../contracts/l2/StakingTokenLocked.sol";
+ import {GnosisStakingProcessorL2} from "../contracts/l2/bridging/GnosisStakingProcessorL2.sol";
+@@ -62,6 +65,8 @@ contract LiquidStakingTest is Test {
+ 
+     GnosisSafeMultisig internal gnosisSafeMultisig;
+     GnosisSafeSameAddressMultisig internal gnosisSafeSameAddressMultisig;
++    RecoveryModule internal recoveryModule;
++    SafeMultisigWithRecoveryModule internal safeMultisigWithRecoveryModule;
+     StakingVerifier internal stakingVerifier;
+     StakingFactory internal stakingFactory;
+ 
+@@ -75,6 +80,7 @@ contract LiquidStakingTest is Test {
+     Collector internal collector;
+     ActivityModule internal activityModule;
+     StakingManager internal stakingManager;
++    ExternalStakingDistributor internal externalStakingDistributor;
+     GnosisStakingProcessorL2 internal gnosisStakingProcessorL2;
+     ModuleActivityChecker internal moduleActivityChecker;
+     StakingTokenLocked internal stakingTokenInstance;
+@@ -121,6 +127,13 @@ contract LiquidStakingTest is Test {
+     // Bridge payload
+     bytes public constant BRIDGE_PAYLOAD = "";
+ 
++    // Collector reward factor
++    uint256 public collectorRewardFactor = 8_000;
++    // Protocol reward factor
++    uint256 public protocolRewardFactor = 1_750;
++    // Curating agent reward factor
++    uint256 public curatingAgentRewardFactor = 250;
++
+ 
+     function setUp() public virtual {
+         utils = new Utils();
+@@ -156,6 +169,9 @@ contract LiquidStakingTest is Test {
+ 
+         gnosisSafeMultisig = new GnosisSafeMultisig(payable(address(gnosisSafe)), address(gnosisSafeProxyFactory));
+         gnosisSafeSameAddressMultisig = new GnosisSafeSameAddressMultisig(multisigProxyHash);
++        recoveryModule = new RecoveryModule(address(multiSend), address(serviceRegistry));
++        safeMultisigWithRecoveryModule = new SafeMultisigWithRecoveryModule(address(gnosisSafe),
++            address(gnosisSafeProxyFactory), address(recoveryModule));
+ 
+         // Deploying OLAS mock and minting to deployer, operator and a current contract
+         olas = new ERC20Token();
+@@ -231,11 +247,23 @@ contract LiquidStakingTest is Test {
+         // Fund staking manager with native to support staking creation
+         vm.deal(address(stakingManager), 1 ether);
+ 
++        ExternalStakingDistributor externalStakingDistributorImplementation = new ExternalStakingDistributor(address(olas),
++            address(serviceManager), address(safeMultisigWithRecoveryModule), address(gnosisSafeSameAddressMultisig),
++            address(fallbackHandler), address(multiSend), address(collector));
++        initPayload = abi.encodeWithSelector(externalStakingDistributorImplementation.initialize.selector, collectorRewardFactor,
++            protocolRewardFactor, curatingAgentRewardFactor);
++        Proxy externalStakingDistributorProxy = new Proxy(address(externalStakingDistributorImplementation), initPayload);
++        externalStakingDistributor = ExternalStakingDistributor(payable(address(externalStakingDistributorProxy)));
++
++        // Fund external staking distributor with native to support staking creation
++        vm.deal(address(externalStakingDistributor), 1 ether);
++
+         bridgeRelayer = new BridgeRelayer(address(olas));
+         gnosisDepositProcessorL1 = new GnosisDepositProcessorL1(address(olas), address(depository), address(bridgeRelayer),
+             address(bridgeRelayer));
+-        gnosisStakingProcessorL2 = new GnosisStakingProcessorL2(address(olas), address(stakingManager), address(collector),
+-            address(bridgeRelayer), address(bridgeRelayer), address(gnosisDepositProcessorL1), CHAIN_ID);
++
++        gnosisStakingProcessorL2 = new GnosisStakingProcessorL2(address(olas), address(stakingManager), address(externalStakingDistributor),
++            address(collector), address(bridgeRelayer), address(bridgeRelayer), address(gnosisDepositProcessorL1), CHAIN_ID);
+ 
+         // changeStakingManager for collector
+         collector.changeStakingManager(address(stakingManager));
+@@ -246,6 +274,9 @@ contract LiquidStakingTest is Test {
+         // changeStakingProcessorL2 for stakingManager
+         stakingManager.changeStakingProcessorL2(address(gnosisStakingProcessorL2));
+ 
++        // changeStakingProcessorL2 for externalStakingDistributor
++        externalStakingDistributor.changeStakingProcessorL2(address(gnosisStakingProcessorL2));
++
+         // Set the gnosisStakingProcessorL2 address in gnosisDepositProcessorL1
+         gnosisDepositProcessorL1.setL2StakingProcessor(address(gnosisStakingProcessorL2));
+ 

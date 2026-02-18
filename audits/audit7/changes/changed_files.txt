@@ -1,0 +1,13 @@
+M	contracts/interfaces/IService.sol
+M	contracts/l1/Depository.sol
+M	contracts/l1/Treasury.sol
+M	contracts/l2/Collector.sol
+A	contracts/l2/ExternalStakingDistributor.sol
+M	contracts/l2/StakingManager.sol
+M	contracts/l2/bridging/BaseStakingProcessorL2.sol
+M	contracts/l2/bridging/DefaultStakingProcessorL2.sol
+M	contracts/l2/bridging/GnosisStakingProcessorL2.sol
+M	contracts/test/ABICreator.sol
+M	doc/architecture-diagrams.md
+M	test/LiquidStaking.js
+M	test/LiquidStaking.t.sol

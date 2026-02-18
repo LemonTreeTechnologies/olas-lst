@@ -1,0 +1,14 @@
+ contracts/interfaces/IService.sol                  |  17 +
+ contracts/l1/Depository.sol                        | 225 +++++-
+ contracts/l1/Treasury.sol                          |  61 +-
+ contracts/l2/Collector.sol                         |  26 +-
+ contracts/l2/ExternalStakingDistributor.sol        | 787 +++++++++++++++++++++
+ contracts/l2/StakingManager.sol                    |  25 +-
+ contracts/l2/bridging/BaseStakingProcessorL2.sol   |   3 +
+ .../l2/bridging/DefaultStakingProcessorL2.sol      |  55 +-
+ contracts/l2/bridging/GnosisStakingProcessorL2.sol |   3 +
+ contracts/test/ABICreator.sol                      |   3 +
+ doc/architecture-diagrams.md                       |  15 +-
+ test/LiquidStaking.js                              |  68 +-
+ test/LiquidStaking.t.sol                           |  35 +-
+ 13 files changed, 1254 insertions(+), 69 deletions(-)

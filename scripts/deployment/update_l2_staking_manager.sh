@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Deploy StakingManager
-./scripts/deployment/deploy_l2_05_staking_manager.sh $1
+#./scripts/deployment/deploy_l2_05_staking_manager.sh $1
 
 # Check if $1 is provided
 if [ -z "$1" ]; then

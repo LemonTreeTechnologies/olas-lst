@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Deploy Depository
-./scripts/deployment/deploy_l1_08_depository.sh $1
+#./scripts/deployment/deploy_l1_08_depository.sh $1
 
 # Check if $1 is provided
 if [ -z "$1" ]; then

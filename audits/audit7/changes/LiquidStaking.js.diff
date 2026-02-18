@@ -1,0 +1,184 @@
+diff --git a/test/LiquidStaking.js b/test/LiquidStaking.js
+index 92264c1..e09a6fe 100644
+--- a/test/LiquidStaking.js
++++ b/test/LiquidStaking.js
+@@ -19,6 +19,8 @@ describe("Liquid Staking", function () {
+     let multiSend;
+     let gnosisSafeMultisig;
+     let gnosisSafeSameAddressMultisig;
++    let recoveryModule;
++    let safeMultisigWithRecoveryModule;
+     let activityChecker;
+     let stakingFactory;
+     let stakingVerifier;
+@@ -32,6 +34,7 @@ describe("Liquid Staking", function () {
+     let bridgeRelayer;
+     let activityModule;
+     let stakingManager;
++    let externalStakingDistributor;
+     let stakingTokenImplementation;
+     let stakingTokenInstance;
+     let gnosisDepositProcessorL1;
+@@ -87,6 +90,12 @@ describe("Liquid Staking", function () {
+     const rewardOperation = "0x0b9821ae606ebc7c79bf3390bdd3dc93e1b4a7cda27aad60646e7b88ff55b001";
+     const unstakeOperation = "0x8ca9a95e41b5eece253c93f5b31eed1253aed6b145d8a6e14d913fdf8e732293";
+     const unstakeRetiredOperation = "0x9065ad15d9673159e4597c86084aff8052550cec93c5a6e44b3f1dba4c8731b3";
++    // Collector reward factor
++    const collectorRewardFactor = "8000";
++    // Protocol reward factor
++    const protocolRewardFactor = "1750";
++    // Curating agent reward factor
++    const curatingAgentRewardFactor = "250";
+ 
+     beforeEach(async function () {
+         signers = await ethers.getSigners();
+@@ -158,6 +167,15 @@ describe("Liquid Staking", function () {
+         gnosisSafeSameAddressMultisig = await GnosisSafeSameAddressMultisig.deploy(bytecodeHash);
+         await gnosisSafeSameAddressMultisig.deployed();
+ 
++        const RecoveryModule = await ethers.getContractFactory("RecoveryModule");
++        recoveryModule = await RecoveryModule.deploy(multiSend.address, serviceRegistry.address);
++        await recoveryModule.deployed();
++
++        const SafeMultisigWithRecoveryModule = await ethers.getContractFactory("SafeMultisigWithRecoveryModule");
++        safeMultisigWithRecoveryModule = await SafeMultisigWithRecoveryModule.deploy(gnosisSafe.address,
++            gnosisSafeProxyFactory.address, recoveryModule.address);
++        await safeMultisigWithRecoveryModule.deployed();
++
+         const ERC20Token = await ethers.getContractFactory("ERC20Token");
+         olas = await ERC20Token.deploy();
+         await olas.deployed();
+@@ -283,6 +301,23 @@ describe("Liquid Staking", function () {
+         // Fund staking manager with native to support staking creation
+         await deployer.sendTransaction({to: stakingManager.address, value: ethers.utils.parseEther("1")});
+ 
++        const ExternalStakingDistributor = await ethers.getContractFactory("ExternalStakingDistributor");
++        externalStakingDistributor = await ExternalStakingDistributor.deploy(olas.address, serviceManager.address,
++            safeMultisigWithRecoveryModule.address, gnosisSafeSameAddressMultisig.address, fallbackHandler.address,
++            multiSend.address, collector.address);
++        await externalStakingDistributor.deployed();
++
++        // Initialize externalStakingDistributor
++        const ExternalStakingDistributorProxy = await ethers.getContractFactory("Proxy");
++        initPayload = externalStakingDistributor.interface.encodeFunctionData("initialize", [collectorRewardFactor,
++            protocolRewardFactor, curatingAgentRewardFactor]);
++        const externalStakingDistributorProxy = await ExternalStakingDistributorProxy.deploy(externalStakingDistributor.address, initPayload);
++        await externalStakingDistributorProxy.deployed();
++        externalStakingDistributor = await ethers.getContractAt("ExternalStakingDistributor", externalStakingDistributorProxy.address);
++
++        // Fund staking manager with native to support staking creation
++        await deployer.sendTransaction({to: stakingManager.address, value: ethers.utils.parseEther("1")});
++
+         const BridgeRelayer = await ethers.getContractFactory("BridgeRelayer");
+         bridgeRelayer = await BridgeRelayer.deploy(olas.address);
+         await bridgeRelayer.deployed();
+@@ -293,7 +328,7 @@ describe("Liquid Staking", function () {
+         await gnosisDepositProcessorL1.deployed();
+ 
+         const GnosisStakingProcessorL2 = await ethers.getContractFactory("GnosisStakingProcessorL2");
+-        gnosisStakingProcessorL2 = await GnosisStakingProcessorL2.deploy(olas.address, stakingManager.address,
++        gnosisStakingProcessorL2 = await GnosisStakingProcessorL2.deploy(olas.address, stakingManager.address, externalStakingDistributor.address,
+             collector.address, bridgeRelayer.address, bridgeRelayer.address, gnosisDepositProcessorL1.address, chainId);
+         await gnosisStakingProcessorL2.deployed();
+ 
+@@ -306,6 +341,9 @@ describe("Liquid Staking", function () {
+         // changeStakingProcessorL2 for stakingManager
+         await stakingManager.changeStakingProcessorL2(gnosisStakingProcessorL2.address);
+ 
++        // changeStakingProcessorL2 for externalStakingDistributor
++        await externalStakingDistributor.changeStakingProcessorL2(gnosisStakingProcessorL2.address);
++
+         // Set the gnosisStakingProcessorL2 address in gnosisDepositProcessorL1
+         await gnosisDepositProcessorL1.setL2StakingProcessor(gnosisStakingProcessorL2.address);
+ 
+@@ -437,8 +475,8 @@ describe("Liquid Staking", function () {
+             // Request withdraw
+             console.log("User requests withdraw of small amount of stOLAS:", stAmount.toString());
+             previewAmount = await st.previewRedeem(stAmount);
+-            let tx = await treasury.requestToWithdraw(stAmount, [gnosisChainId], [stakingTokenInstance.address],
+-                [bridgePayload], [0]);
++            let tx = await treasury.requestToWithdraw(stAmount, [[], [gnosisChainId]], [], [stakingTokenInstance.address],
++                [[], [bridgePayload]], [[], [0]]);
+             let res = await tx.wait();
+             // Get withdraw request Id
+             //console.log(res.logs);
+@@ -466,8 +504,8 @@ describe("Liquid Staking", function () {
+             stBalance = await st.balanceOf(deployer.address);
+             console.log("User requests withdraw of all remaining stOLAS:", stBalance.toString());
+             previewAmount = await st.previewRedeem(stBalance);
+-            tx = await treasury.requestToWithdraw(stBalance, [gnosisChainId], [stakingTokenInstance.address],
+-                [bridgePayload], [0]);
++            tx = await treasury.requestToWithdraw(stBalance, [[], [gnosisChainId]], [], [stakingTokenInstance.address],
++                [[], [bridgePayload]], [[], [0]]);
+             res = await tx.wait();
+             // Get withdraw request Id
+             //console.log(res.logs);
+@@ -598,8 +636,8 @@ describe("Liquid Staking", function () {
+             // Request withdraw
+             console.log("User requests withdraw of half of stOLAS:", stAmount.toString());
+             previewAmount = await st.previewRedeem(stAmount);
+-            let tx = await treasury.requestToWithdraw(stAmount, [gnosisChainId], [stakingTokenInstance.address],
+-                [bridgePayload], [0]);
++            let tx = await treasury.requestToWithdraw(stAmount, [[], [gnosisChainId]], [], [stakingTokenInstance.address],
++                [[], [bridgePayload]], [[], [0]]);
+             let res = await tx.wait();
+             // Get withdraw request Id
+             //console.log(res.logs);
+@@ -627,8 +665,8 @@ describe("Liquid Staking", function () {
+             stBalance = await st.balanceOf(deployer.address);
+             console.log("User requests withdraw of all remaining stOLAS:", stBalance.toString());
+             previewAmount = await st.previewRedeem(stBalance);
+-            tx = await treasury.requestToWithdraw(stBalance, [gnosisChainId], [stakingTokenInstance.address],
+-                [bridgePayload], [0]);
++            tx = await treasury.requestToWithdraw(stBalance, [[], [gnosisChainId]], [], [stakingTokenInstance.address],
++                [[], [bridgePayload]], [[], [0]]);
+             res = await tx.wait();
+             // Get withdraw request Id
+             //console.log(res.logs);
+@@ -752,8 +790,8 @@ describe("Liquid Staking", function () {
+             // Request withdraw
+             console.log("User requests withdraw of half of stOLAS:", stAmount.toString());
+             previewAmount = await st.previewRedeem(stAmount);
+-            let tx = await treasury.requestToWithdraw(stAmount, [gnosisChainId], [stakingTokenInstance.address],
+-                [bridgePayload], [0]);
++            let tx = await treasury.requestToWithdraw(stAmount, [[], [gnosisChainId]], [], [stakingTokenInstance.address],
++                [[], [bridgePayload]], [[], [0]]);
+             let res = await tx.wait();
+             // Get withdraw request Id
+             //console.log(res.logs);
+@@ -881,7 +919,7 @@ describe("Liquid Staking", function () {
+             let bridgePayloads = new Array(numUnstakes).fill(bridgePayload);
+             let values = new Array(numUnstakes).fill(0);
+             previewAmount = await st.previewRedeem(stBalance);
+-            tx = await treasury.requestToWithdraw(stBalance, chainIds, stakingInstances,bridgePayloads, values);
++            tx = await treasury.requestToWithdraw(stBalance, [[], chainIds], [], stakingInstances, [[], bridgePayloads], [[], values]);
+             res = await tx.wait();
+             // Get withdraw request Id
+             //console.log(res.logs);
+@@ -1034,7 +1072,7 @@ describe("Liquid Staking", function () {
+                 console.log("Iteration:", i);
+                 const previewAmount = await st.previewRedeem(stAmount);
+                 console.log("previewAmount:", previewAmount.toString());
+-                let tx = await treasury.requestToWithdraw(stAmount, chainIds, stakingInstances, bridgePayloads, values);
++                let tx = await treasury.requestToWithdraw(stAmount, [[], chainIds], [], stakingInstances, [[], bridgePayloads], [[], values]);
+                 let res = await tx.wait();
+                 // Get withdraw request Id
+                 //console.log(res.logs);
+@@ -1246,7 +1284,7 @@ describe("Liquid Staking", function () {
+                 // Request withdraw
+                 console.log("User requests withdraw of half of stOLAS:", stAmount.toString());
+                 previewAmount = await st.previewRedeem(stAmount);
+-                let tx = await treasury.requestToWithdraw(stAmount, chainIds, stakingInstances, bridgePayloads, values);
++                let tx = await treasury.requestToWithdraw(stAmount, [[], chainIds], [], stakingInstances, [[], bridgePayloads], [[], values]);
+                 let res = await tx.wait();
+                 // Get withdraw request Id
+                 //console.log(res.logs);
+@@ -1316,7 +1354,7 @@ describe("Liquid Staking", function () {
+                 // Request withdraw
+                 console.log("User requests partial withdraw of stOLAS:", stAmount.toString());
+                 const previewAmount = await st.previewRedeem(stAmount);
+-                let tx = await treasury.requestToWithdraw(stAmount, chainIds, stakingInstances, bridgePayloads, values);
++                let tx = await treasury.requestToWithdraw(stAmount, [[], chainIds], [], stakingInstances, [[], bridgePayloads], [[], values]);
+                 let res = await tx.wait();
+                 // Get withdraw request Id
+                 //console.log(res.logs);

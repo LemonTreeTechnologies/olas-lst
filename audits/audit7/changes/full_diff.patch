@@ -1,0 +1,1795 @@
+diff --git a/contracts/interfaces/IService.sol b/contracts/interfaces/IService.sol
+index d033a10..1454157 100644
+--- a/contracts/interfaces/IService.sol
++++ b/contracts/interfaces/IService.sol
+@@ -27,6 +27,23 @@ interface IService {
+         uint32 threshold
+     ) external returns (uint256 serviceId);
+ 
++    /// @dev Updates a service in a CRUD way.
++    /// @param token ERC20 token address for the security deposit, or ETH.
++    /// @param configHash IPFS hash pointing to the config metadata.
++    /// @param agentIds Canonical agent Ids.
++    /// @param agentParams Number of agent instances and required bond to register an instance in the service.
++    /// @param threshold Threshold for a multisig composed by agents.
++    /// @param serviceId Service Id to be updated.
++    /// @return success True, if function executed successfully.
++    function update(
++        address token,
++        bytes32 configHash,
++        uint32[] memory agentIds,
++        IService.AgentParams[] memory agentParams,
++        uint32 threshold,
++        uint256 serviceId
++    ) external returns (bool success);
++
+     /// @dev Activates the service and its sensitive components.
+     /// @param serviceId Correspondent service Id.
+     /// @return success True, if function executed successfully.
+diff --git a/contracts/l1/Depository.sol b/contracts/l1/Depository.sol
+index 082af1d..2f2853a 100644
+--- a/contracts/l1/Depository.sol
++++ b/contracts/l1/Depository.sol
+@@ -117,11 +117,22 @@ contract Depository is Implementation {
+     );
+     event Unstake(address indexed sender, uint256[] chainIds, address[] stakingProxies, uint256[] amounts);
+     event Retired(uint256[] chainIds, address[] stakingProxies);
++    event SetExternalStakingDistributorChainIds(address[] externalStakingDistributors, uint256[] chainIds);
++    event StakeExternal(
++        address indexed sender, uint256[] chainIds, address[] externalStakingDistributors, uint256[] amounts
++    );
++    event UnstakeExternal(
++        address indexed sender,
++        uint256[] chainIds,
++        address[] externalStakingDistributors,
++        uint256[] amounts,
++        bytes32 operation
++    );
+     event DepositoryPaused();
+     event DepositoryUnpaused();
+ 
+     // Depository version
+-    string public constant VERSION = "0.1.0";
++    string public constant VERSION = "0.2.0";
+     // Stake operation
+     bytes32 public constant STAKE = 0x1bcc0f4c3fad314e585165815f94ecca9b96690a26d6417d7876448a9a867a69;
+     // Unstake operation
+@@ -160,6 +171,9 @@ contract Depository is Implementation {
+     // Mapping for account => withdraw amounts
+     mapping(address => uint256) public mapAccountWithdraws;
+ 
++    // Mapping for chain Id => (amount deposited : address of staked external)
++    mapping(uint256 => uint256) public mapChainIdStakedExternals;
++
+     /// @dev Depository constructor.
+     /// @param _olas OLAS address.
+     /// @param _st stOLAS address.
+@@ -646,6 +660,9 @@ contract Depository is Implementation {
+             revert UnauthorizedAccount(msg.sender);
+         }
+ 
++        // Increase total account unstake amount
++        mapAccountWithdraws[sender] += unstakeAmount;
++
+         // Check array lengths
+         if (
+             chainIds.length == 0 || chainIds.length != stakingProxies.length || chainIds.length != bridgePayloads.length
+@@ -699,7 +716,7 @@ contract Depository is Implementation {
+         // Request unstake via relevant deposit processors
+         _operationSendMessage(chainIds, stakingProxies, amounts, bridgePayloads, values, UNSTAKE, sender);
+ 
+-        emit Unstake(msg.sender, chainIds, stakingProxies, amounts);
++        emit Unstake(sender, chainIds, stakingProxies, amounts);
+     }
+ 
+     /// @dev Calculates amounts and initiates cross-chain unstake request for specified retired models.
+@@ -808,6 +825,210 @@ contract Depository is Implementation {
+         emit Retired(chainIds, stakingProxies);
+     }
+ 
++    /// @dev Sets external staking distributor contract addresses and their corresponding L2 chain Ids.
++    /// @notice Overwriting existing staking distributor addresses is only possible if their balances are zero.
++    /// @param externalStakingDistributors Set of external staking distributor contract addresses on L2.
++    /// @param chainIds Set of corresponding L2 chain Ids.
++    function setExternalStakingDistributorChainIds(
++        address[] memory externalStakingDistributors,
++        uint256[] memory chainIds
++    ) external {
++        // Check for the ownership
++        if (msg.sender != owner) {
++            revert OwnerOnly(msg.sender, owner);
++        }
++
++        // Check for array length correctness
++        if (externalStakingDistributors.length == 0 || externalStakingDistributors.length != chainIds.length) {
++            revert WrongArrayLength();
++        }
++
++        // Link external staking distributors and chain Ids
++        for (uint256 i = 0; i < chainIds.length; ++i) {
++            // Check supported chain Ids on L2
++            if (chainIds[i] == 0) {
++                revert ZeroValue();
++            }
++
++            // Get external staking distributor amount
++            uint256 stakedExternalAmount = mapChainIdStakedExternals[chainIds[i]] >> 160;
++            // Check for external staking distributor amount that must be equal to zero
++            if (stakedExternalAmount > 0) {
++                revert Overflow(stakedExternalAmount, 0);
++            }
++
++            // Note: externalStakingDistributors[i] might be zero if there is a need to stop processing a specific L2 chain Id
++            mapChainIdStakedExternals[chainIds[i]] = uint256(uint160(externalStakingDistributors[i]));
++        }
++
++        emit SetExternalStakingDistributorChainIds(externalStakingDistributors, chainIds);
++    }
++
++    /// @dev Initiates cross-chain stake request for external staking distributors by owner.
++    /// @notice It is solely caller responsibility not to run out of gas when calling this function.
++    ///         Subject to gas estimation as the number of array elements is proportional to gas usage increase.
++    /// @param chainIds Set of chain Ids with external staking distributors.
++    /// @param amounts Set of unstake amounts requested from external staking on each corresponding chain Id.
++    /// @param bridgePayloads Bridge payloads corresponding to each chain Id.
++    /// @param values Value amounts for each bridge interaction, if applicable.
++    function depositExternal(
++        uint256[] memory chainIds,
++        uint256[] memory amounts,
++        bytes[] memory bridgePayloads,
++        uint256[] memory values
++    ) external payable {
++        // Reentrancy guard
++        if (_locked) {
++            revert ReentrancyGuard();
++        }
++        _locked = true;
++
++        // Check for owner access
++        if (msg.sender != owner) {
++            revert UnauthorizedAccount(msg.sender);
++        }
++
++        // Check array lengths
++        if (
++            chainIds.length == 0 || chainIds.length != amounts.length || chainIds.length != bridgePayloads.length
++                || chainIds.length != values.length
++        ) {
++            revert WrongArrayLength();
++        }
++
++        address[] memory externalStakingDistributors = new address[](chainIds.length);
++        uint256[] memory localStakedExternals = new uint256[](chainIds.length);
++        uint256 totalAmount;
++
++        // Traverse all chain Ids
++        for (uint256 i = 0; i < chainIds.length; ++i) {
++            // TODO check chain Ids for increasing order
++            uint256 stakedExternal = mapChainIdStakedExternals[chainIds[i]];
++            (localStakedExternals[i], externalStakingDistributors[i]) =
++            ((stakedExternal >> 160), address(uint160(stakedExternal)));
++
++            // This should never happen
++            if (externalStakingDistributors[i] == address(0)) {
++                revert ZeroAddress();
++            }
++
++            // Update external deposited amounts
++            localStakedExternals[i] += amounts[i];
++            totalAmount += amounts[i];
++
++            // Update staked external amount
++            mapChainIdStakedExternals[chainIds[i]] =
++                uint256(uint160(externalStakingDistributors[i])) | (localStakedExternals[i] << 160);
++        }
++
++        // Get actual stOLAS reserve balance
++        uint256 stReserveBalance = IST(st).reserveBalance();
++
++        // Check if reserve balance has requested amount
++        if (totalAmount > stReserveBalance) {
++            revert Overflow(totalAmount, stReserveBalance);
++        }
++
++        // Adjust reserve balance
++        stReserveBalance -= totalAmount;
++
++        // Pull required funds from stOLAS and record correct balances
++        IST(st).syncStakeBalances(stReserveBalance, totalAmount, totalAmount, false);
++
++        // Send funds to external staking distributors via relevant deposit processors
++        _operationSendMessage(chainIds, externalStakingDistributors, amounts, bridgePayloads, values, STAKE, msg.sender);
++
++        emit StakeExternal(msg.sender, chainIds, externalStakingDistributors, amounts);
++    }
++
++    /// @dev Initiates cross-chain unstake request on external staking distributors by Treasury or owner.
++    /// @notice 1. By Treasury: deducts reserves from their staked part and get them back as vault assets.
++    ///         2. By owner: deducts reserves from their staked part and get them back as assets reserved for staking.
++    /// @notice It is solely caller responsibility not to run out of gas when calling this function.
++    ///         Subject to gas estimation as the number of array elements is proportional to gas usage increase.
++    /// @param chainIds Set of chain Ids with external staking distributors.
++    /// @param amounts Set of unstake amounts requested from external staking on each corresponding chain Id.
++    /// @param bridgePayloads Bridge payloads corresponding to each chain Id.
++    /// @param values Value amounts for each bridge interaction, if applicable.
++    /// @param sender Sender account.
++    function unstakeExternal(
++        uint256[] memory chainIds,
++        uint256[] memory amounts,
++        bytes[] memory bridgePayloads,
++        uint256[] memory values,
++        address sender
++    ) external payable {
++        // Reentrancy guard
++        if (_locked) {
++            revert ReentrancyGuard();
++        }
++        _locked = true;
++
++        bytes32 operation;
++        // Check for proper access: treasury is able to UNSTAKE only, owner is able to UNSTAKE_RETIRED only
++        if (msg.sender == treasury) {
++            operation = UNSTAKE;
++        } else if (msg.sender == owner) {
++            sender = msg.sender;
++            operation = UNSTAKE_RETIRED;
++        } else {
++            revert UnauthorizedAccount(msg.sender);
++        }
++
++        // Check array lengths
++        if (
++            chainIds.length == 0 || chainIds.length != amounts.length || chainIds.length != bridgePayloads.length
++                || chainIds.length != values.length
++        ) {
++            revert WrongArrayLength();
++        }
++
++        // Allocate arrays
++        address[] memory externalStakingDistributors = new address[](chainIds.length);
++        uint256[] memory localStakedExternals = new uint256[](chainIds.length);
++
++        uint256 unstakeAmount;
++
++        // Traverse all chain Ids
++        for (uint256 i = 0; i < chainIds.length; ++i) {
++            // TODO check chain Ids for increasing order
++            uint256 stakedExternal = mapChainIdStakedExternals[chainIds[i]];
++            (localStakedExternals[i], externalStakingDistributors[i]) =
++            ((stakedExternal >> 160), address(uint160(stakedExternal)));
++
++            // This should never happen
++            if (externalStakingDistributors[i] == address(0)) {
++                revert ZeroAddress();
++            }
++
++            // TODO Change for auto calculation? It seems better to exactly specify amounts as it can be figured out offchain
++            // Check for allowed L2 deposits
++            if (amounts[i] > localStakedExternals[i]) {
++                revert Overflow(amounts[i], localStakedExternals[i]);
++            }
++
++            // Update external deposited amounts
++            localStakedExternals[i] -= amounts[i];
++
++            // Accumulate total unstake amount
++            unstakeAmount += amounts[i];
++
++            // Update staked external amount
++            mapChainIdStakedExternals[chainIds[i]] =
++                uint256(uint160(externalStakingDistributors[i])) | (localStakedExternals[i] << 160);
++        }
++
++        if (operation == UNSTAKE) {
++            // Increase total account unstake amount
++            mapAccountWithdraws[sender] += unstakeAmount;
++        }
++
++        // Request unstake or unstake retired from external staking distributors via relevant deposit processors
++        _operationSendMessage(chainIds, externalStakingDistributors, amounts, bridgePayloads, values, operation, sender);
++
++        emit UnstakeExternal(sender, chainIds, externalStakingDistributors, amounts, operation);
++    }
++
+     /// @dev Pauses contract.
+     function pause() external {
+         // Check for ownership
+diff --git a/contracts/l1/Treasury.sol b/contracts/l1/Treasury.sol
+index 08ad656..dbe1540 100644
+--- a/contracts/l1/Treasury.sol
++++ b/contracts/l1/Treasury.sol
+@@ -22,6 +22,24 @@ interface IDepository {
+         uint256[] memory values,
+         address sender
+     ) external payable returns (uint256[] memory amounts);
++
++    /// @dev Initiates cross-chain unstake request on external staking distributors by Treasury or owner.
++    /// @notice 1. By Treasury: deducts reserves from their staked part and get them back as vault assets.
++    ///         2. By owner: deducts reserves from their staked part and get them back as assets reserved for staking.
++    /// @notice It is solely caller responsibility not to run out of gas when calling this function.
++    ///         Subject to gas estimation as the number of array elements is proportional to gas usage increase.
++    /// @param chainIds Set of chain Ids with external staking distributors.
++    /// @param amounts Set of unstake amounts requested from external staking on each corresponding chain Id.
++    /// @param bridgePayloads Bridge payloads corresponding to each chain Id.
++    /// @param values Value amounts for each bridge interaction, if applicable.
++    /// @param sender Sender account.
++    function unstakeExternal(
++        uint256[] memory chainIds,
++        uint256[] memory amounts,
++        bytes[] memory bridgePayloads,
++        uint256[] memory values,
++        address sender
++    ) external payable;
+ }
+ 
+ interface IST {
+@@ -122,18 +140,20 @@ contract Treasury is Implementation, ERC6909 {
+     /// @notice Vault reserves are used first. If there is a lack of OLAS reserves, the backup amount is requested
+     ///         to be unstaked from other models.
+     /// @param stAmount Provided stAmount to burn in favor of OLAS tokens.
+-    /// @param chainIds Set of chain Ids with staking proxies.
+-    /// @param stakingProxies Set of staking proxies corresponding to each chain Id.
+-    /// @param bridgePayloads Bridge payloads corresponding to each chain Id.
+-    /// @param values Value amounts for each bridge interaction, if applicable.
++    /// @param chainIds 2D set of chain Ids with [staked externals] and [LST staking proxies].
++    /// @param externalAmounts Set of corresponding amounts for staked externals.
++    /// @param stakingProxies Set of staking proxies corresponding to each chain Id in [LST staking proxies] set.
++    /// @param bridgePayloads 2D set of bridge payloads corresponding to each chain Id.
++    /// @param values 2D set of value amounts for each bridge interaction, if applicable.
+     /// @return requestId Withdraw request ERC-1155 token.
+     /// @return olasAmount Calculated OLAS amount.
+     function requestToWithdraw(
+         uint256 stAmount,
+-        uint256[] memory chainIds,
++        uint256[][] memory chainIds,
++        uint256[] memory externalAmounts,
+         address[] memory stakingProxies,
+-        bytes[] memory bridgePayloads,
+-        uint256[] memory values
++        bytes[][] memory bridgePayloads,
++        uint256[][] memory values
+     ) external payable returns (uint256 requestId, uint256 olasAmount) {
+         // Reentrancy guard
+         if (_locked) {
+@@ -178,7 +198,32 @@ contract Treasury is Implementation, ERC6909 {
+         if (stakedBalanceBefore > stakedBalanceAfter) {
+             uint256 withdrawDiff = stakedBalanceBefore - stakedBalanceAfter;
+ 
+-            IDepository(depository).unstake(withdrawDiff, chainIds, stakingProxies, bridgePayloads, values, msg.sender);
++            // Check if unstake from externals is requested
++            if (chainIds[0].length > 0) {
++                uint256 totalExternalAmount;
++                // Traverse external amounts, if any
++                for (uint256 i = 0; i < externalAmounts.length; ++i) {
++                    totalExternalAmount += externalAmounts[i];
++                }
++
++                // Check for overflow
++                if (totalExternalAmount > withdrawDiff) {
++                    revert Overflow(totalExternalAmount, withdrawDiff);
++                }
++
++                // Update withdraw amount
++                if (totalExternalAmount > 0) {
++                    withdrawDiff -= totalExternalAmount;
++                }
++
++                // First, unstake from external proxies
++                IDepository(depository)
++                    .unstakeExternal(chainIds[0], externalAmounts, bridgePayloads[0], values[0], msg.sender);
++            }
++
++            // Second, unstake from LST staking proxies, if still required
++            IDepository(depository)
++                .unstake(withdrawDiff, chainIds[1], stakingProxies, bridgePayloads[1], values[1], msg.sender);
+         }
+ 
+         emit WithdrawRequestInitiated(msg.sender, requestId, stAmount, olasAmount, withdrawTime);
+diff --git a/contracts/l2/Collector.sol b/contracts/l2/Collector.sol
+index aeb9747..3e6c707 100644
+--- a/contracts/l2/Collector.sol
++++ b/contracts/l2/Collector.sol
+@@ -21,11 +21,6 @@ interface IToken {
+     /// @param amount Amount to transfer to.
+     /// @return True if the function execution is successful.
+     function transferFrom(address from, address to, uint256 amount) external returns (bool);
+-
+-    /// @dev Gets the amount of tokens owned by a specified account.
+-    /// @param account Account address.
+-    /// @return Amount of tokens owned.
+-    function balanceOf(address account) external view returns (uint256);
+ }
+ 
+ /// @dev Zero value.
+@@ -185,6 +180,27 @@ contract Collector is Implementation {
+         emit OperationReceiversSet(operations, receivers);
+     }
+ 
++    /// @dev Tops up address(this) with a specified amount for protocol assets.
++    /// @param amount OLAS amount.
++    function topUpProtocol(uint256 amount) external {
++        // Reentrancy guard
++        if (_locked == 2) {
++            revert ReentrancyGuard();
++        }
++        _locked = 2;
++
++        // Pull OLAS amount
++        IToken(olas).transferFrom(msg.sender, address(this), amount);
++
++        // Update protocol balance
++        uint256 curProtocolBalance = protocolBalance + amount;
++        protocolBalance = curProtocolBalance;
++
++        emit ProtocolBalanceUpdated(curProtocolBalance);
++
++        _locked = 1;
++    }
++
+     /// @dev Tops up address(this) with a specified amount according to a selected operation.
+     /// @param amount OLAS amount.
+     /// @param operation Operation type.
+diff --git a/contracts/l2/ExternalStakingDistributor.sol b/contracts/l2/ExternalStakingDistributor.sol
+new file mode 100644
+index 0000000..2e1bd78
+--- /dev/null
++++ b/contracts/l2/ExternalStakingDistributor.sol
+@@ -0,0 +1,787 @@
++// SPDX-License-Identifier: MIT
++pragma solidity ^0.8.30;
++
++import {ERC721TokenReceiver} from "../../lib/autonolas-registries/lib/solmate/src/tokens/ERC721.sol";
++import {Implementation, OwnerOnly, ZeroAddress} from "../Implementation.sol";
++import {IService} from "../interfaces/IService.sol";
++import {IStaking} from "../interfaces/IStaking.sol";
++import {IToken, INFToken} from "../interfaces/IToken.sol";
++
++// Collector interface
++interface ICollector {
++    /// @dev Tops up address(this) with a specified amount according to a selected operation.
++    /// @param amount OLAS amount.
++    /// @param operation Operation type.
++    function topUpBalance(uint256 amount, bytes32 operation) external;
++
++    /// @dev Tops up address(this) with a specified amount for protocol assets.
++    /// @param amount OLAS amount.
++    function topUpProtocol(uint256 amount) external;
++}
++
++// Safe multi send interface
++interface IMultiSend {
++    /// @dev Sends multiple transactions and reverts all if one fails.
++    /// @param transactions Encoded transactions. Each transaction is encoded as a packed bytes of
++    ///                     operation has to be uint8(0) in this version (=> 1 byte),
++    ///                     to as a address (=> 20 bytes),
++    ///                     value as a uint256 (=> 32 bytes),
++    ///                     payload length as a uint256 (=> 32 bytes),
++    ///                     payload as bytes.
++    ///                     see abi.encodePacked for more information on packed encoding
++    /// @notice The code is for most part the same as the normal MultiSend (to keep compatibility),
++    ///         but reverts if a transaction tries to use a delegatecall.
++    /// @notice This method is payable as delegatecalls keep the msg.value from the previous call
++    ///         If the calling method (e.g. execTransaction) received ETH this would revert otherwise
++    function multiSend(bytes memory transactions) external payable;
++}
++
++// Generic Safe interface
++interface ISafe {
++    enum Operation {
++        Call,
++        DelegateCall
++    }
++
++    /// @dev Allows to add a module to the whitelist.
++    /// @param module Module to be whitelisted.
++    function enableModule(address module) external;
++
++    /// @dev Allows to execute a Safe transaction confirmed by required number of owners and then pays the account that submitted the transaction.
++    /// @param to Destination address of Safe transaction.
++    /// @param value Ether value of Safe transaction.
++    /// @param data Data payload of Safe transaction.
++    /// @param operation Operation type of Safe transaction.
++    /// @param safeTxGas Gas that should be used for the Safe transaction.
++    /// @param baseGas Gas costs that are independent of the transaction execution(e.g. base transaction fee, signature check, payment of the refund)
++    /// @param gasPrice Gas price that should be used for the payment calculation.
++    /// @param gasToken Token address (or 0 if ETH) that is used for the payment.
++    /// @param refundReceiver Address of receiver of gas payment (or 0 if tx.origin).
++    /// @param signatures Packed signature data ({bytes32 r}{bytes32 s}{uint8 v})
++    function execTransaction(
++        address to,
++        uint256 value,
++        bytes calldata data,
++        Operation operation,
++        uint256 safeTxGas,
++        uint256 baseGas,
++        uint256 gasPrice,
++        address gasToken,
++        address payable refundReceiver,
++        bytes memory signatures
++    ) external payable returns (bool success);
++
++    /// @dev Allows a Module to execute a Safe transaction without any further confirmations.
++    /// @param to Destination address of module transaction.
++    /// @param value Ether value of module transaction.
++    /// @param data Data payload of module transaction.
++    /// @param operation Operation type of module transaction.
++    function execTransactionFromModule(address to, uint256 value, bytes memory data, Operation operation)
++        external
++        returns (bool success);
++
++    /// @dev Allows to swap/replace an owner from the Safe with another address.
++    ///      This can only be done via a Safe transaction.
++    /// @notice Replaces the owner `oldOwner` in the Safe with `newOwner`.
++    /// @param prevOwner Owner that pointed to the owner to be replaced in the linked list
++    /// @param oldOwner Owner address to be replaced.
++    /// @param newOwner New owner address.
++    function swapOwner(address prevOwner, address oldOwner, address newOwner) external;
++}
++
++// SafeMultisigWithRecoveryModule interface
++interface ISafeMultisigWithRecoveryModule {
++    /// @dev Creates a Safe multisig.
++    /// @param owners Set of multisig owners.
++    /// @param threshold Number of required confirmations for a multisig transaction.
++    /// @param data Encoded data related to the creation of a chosen multisig.
++    /// @return multisig Address of a created multisig.
++    function create(address[] memory owners, uint256 threshold, bytes memory data) external returns (address multisig);
++}
++
++/// @dev Zero value.
++error ZeroValue();
++
++/// @dev The contract is already initialized.
++error AlreadyInitialized();
++
++/// @dev Value overflow.
++/// @param provided Overflow value.
++/// @param max Maximum possible value.
++error Overflow(uint256 provided, uint256 max);
++
++/// @dev Account is unauthorized.
++/// @param account Account address.
++error UnauthorizedAccount(address account);
++
++/// @dev Caught reentrancy violation.
++error ReentrancyGuard();
++
++/// @dev Execution has failed.
++/// @param target Target address.
++/// @param payload Payload data.
++error ExecutionFailed(address target, bytes payload);
++
++/// @title ExternalStakingDistributor - Smart contract for distributing OLAS across external staking contracts
++contract ExternalStakingDistributor is Implementation, ERC721TokenReceiver {
++    event RewardFactorsChanged(
++        uint256 collectorRewardFactor, uint256 protocolRewardFactor, uint256 curatingAgentRewardFactor
++    );
++    event StakingProcessorL2Updated(address indexed l2StakingProcessor);
++    event ExternalServiceStaked(
++        address indexed sender,
++        address indexed stakingProxy,
++        uint256 indexed serviceId,
++        uint256 agentId,
++        bytes32 configHash,
++        uint256 stakingDeposit,
++        uint256 stakedBalance
++    );
++    event ExternalServiceUnstaked(
++        address indexed sender,
++        address indexed stakingProxy,
++        uint256 indexed serviceId,
++        uint256 stakingDeposit,
++        uint256 stakedBalance,
++        uint256 unstakeRequestedAmount
++    );
++    event Deployed(uint256 indexed serviceId, address indexed multisig);
++    event RewardsDistributed(uint256 collectorAmount, uint256 protocolAmount, uint256 curatingAgentAmount);
++    event SetStakingProxyTypes(address[] stakingProxies, bytes32[] proxyTypes);
++    event Deposit(address indexed sender, uint256 amount, bytes32 operation);
++    event Withdraw(address indexed sender, uint256 amount, bytes32 operation, uint256 unstakeRequestedAmount);
++    event Claimed(address[] stakingProxies, uint256[] serviceIds, uint256[] rewards);
++    event NativeTokenReceived(uint256 amount);
++
++    // Staking Manager version
++    string public constant VERSION = "0.1.0";
++    // Reward transfer operation
++    bytes32 public constant REWARD = 0x0b9821ae606ebc7c79bf3390bdd3dc93e1b4a7cda27aad60646e7b88ff55b001;
++    // Staking type: generic OLAS V1
++    bytes32 public constant STAKING_TYPE_OLAS_V1 = 0xdbeba05bf894aa66d04900d63d8bb3ce8d6e45fc66b64d81de6e5cfcb445fca1;
++
++    // Number of agent instances
++    uint256 public constant NUM_AGENT_INSTANCES = 1;
++    // Threshold
++    uint256 public constant THRESHOLD = 1;
++    // Max reward factor
++    uint256 public constant MAX_REWARD_FACTOR = 10_000;
++
++    // Service manager address
++    address public immutable serviceManager;
++    // OLAS token address
++    address public immutable olas;
++    // Service registry address
++    address public immutable serviceRegistry;
++    // Service registry token utility address
++    address public immutable serviceRegistryTokenUtility;
++    // Safe multisig with recovery module processing contract address
++    address public immutable safeMultisigWithRecoveryModule;
++    // Safe same address multisig processing contract address
++    address public safeSameAddressMultisig;
++    // Safe fallback handler address
++    address public immutable fallbackHandler;
++    // Multisend contract address
++    address public immutable multiSend;
++    // OLAS collector address
++    address public immutable collector;
++
++    // Staked balance
++    uint256 public stakedBalance;
++    // Collector reward factor
++    uint256 public collectorRewardFactor;
++    // Protocol reward factor
++    uint256 public protocolRewardFactor;
++    // Curating agent reward factor
++    uint256 public curatingAgentRewardFactor;
++    // L2 staking processor address
++    address public l2StakingProcessor;
++
++    // Nonce
++    uint256 internal _nonce;
++    // Reentrancy lock
++    uint256 internal _locked = 1;
++
++    // Mapping of whitelisted staking proxy address => staking type
++    mapping(address => bytes32) public mapStakingProxyTypes;
++    // Mapping of service Id => agent address curating it
++    mapping(uint256 => address) public mapServiceIdCuratingAgents;
++    // Mapping of unstake requests: unstake operation => amount requested
++    mapping(bytes32 => uint256) public mapUnstakeOperationRequestedAmounts;
++
++    /// @dev ExternalStakingDistributor constructor.
++    /// @param _olas OLAS token address.
++    /// @param _serviceManager Service manager address.
++    /// @param _safeMultisigWithRecoveryModule Safe multisig with recovery module processing contract address.
++    /// @param _safeSameAddressMultisig Safe same address multisig processing contract address.
++    /// @param _fallbackHandler Safe fallback handler address.
++    /// @param _multiSend Multisend contract address.
++    /// @param _collector OLAS collector address.
++    constructor(
++        address _olas,
++        address _serviceManager,
++        address _safeMultisigWithRecoveryModule,
++        address _safeSameAddressMultisig,
++        address _fallbackHandler,
++        address _multiSend,
++        address _collector
++    ) {
++        // Check for zero addresses
++        if (
++            _olas == address(0) || _serviceManager == address(0) || _safeMultisigWithRecoveryModule == address(0)
++                || _safeSameAddressMultisig == address(0) || _fallbackHandler == address(0) || _multiSend == address(0)
++                || _collector == address(0)
++        ) {
++            revert ZeroAddress();
++        }
++
++        olas = _olas;
++        serviceManager = _serviceManager;
++        safeMultisigWithRecoveryModule = _safeMultisigWithRecoveryModule;
++        safeSameAddressMultisig = _safeSameAddressMultisig;
++        fallbackHandler = _fallbackHandler;
++        multiSend = _multiSend;
++        collector = _collector;
++        serviceRegistry = IService(serviceManager).serviceRegistry();
++        serviceRegistryTokenUtility = IService(serviceManager).serviceRegistryTokenUtility();
++    }
++
++    /// @dev Initializes external staking distributor.
++    /// @param _collectorRewardFactor Collector reward factor.
++    /// @param _protocolRewardFactor Protocol reward factor.
++    /// @param _curatingAgentRewardFactor Curating agent reward factor.
++    function initialize(
++        uint256 _collectorRewardFactor,
++        uint256 _protocolRewardFactor,
++        uint256 _curatingAgentRewardFactor
++    ) external {
++        if (owner != address(0)) {
++            revert AlreadyInitialized();
++        }
++
++        changeRewardFactors(_collectorRewardFactor, _protocolRewardFactor, _curatingAgentRewardFactor);
++        owner = msg.sender;
++    }
++
++    /// @dev Initializes external staking distributor.
++    /// @param _collectorRewardFactor Collector reward factor.
++    /// @param _protocolRewardFactor Protocol reward factor.
++    /// @param _curatingAgentRewardFactor Curating agent reward factor.
++    function changeRewardFactors(
++        uint256 _collectorRewardFactor,
++        uint256 _protocolRewardFactor,
++        uint256 _curatingAgentRewardFactor
++    ) public {
++        if (owner != address(0)) {
++            revert AlreadyInitialized();
++        }
++
++        // Check for MAX_REWARD_FACTOR overflow
++        uint256 totalFactor = _collectorRewardFactor + _protocolRewardFactor + _curatingAgentRewardFactor;
++        if (totalFactor > MAX_REWARD_FACTOR) {
++            revert Overflow(totalFactor, MAX_REWARD_FACTOR);
++        }
++
++        collectorRewardFactor = _collectorRewardFactor;
++        protocolRewardFactor = _protocolRewardFactor;
++        curatingAgentRewardFactor = _curatingAgentRewardFactor;
++
++        emit RewardFactorsChanged(_collectorRewardFactor, _protocolRewardFactor, _curatingAgentRewardFactor);
++    }
++
++    /// @dev Changes token relayer address.
++    /// @param newStakingProcessorL2 Address of a new owner.
++    function changeStakingProcessorL2(address newStakingProcessorL2) external {
++        // Check for ownership
++        if (msg.sender != owner) {
++            revert OwnerOnly(msg.sender, owner);
++        }
++
++        // Check for the zero address
++        if (newStakingProcessorL2 == address(0)) {
++            revert ZeroAddress();
++        }
++
++        l2StakingProcessor = newStakingProcessorL2;
++        emit StakingProcessorL2Updated(newStakingProcessorL2);
++    }
++
++    /// @dev Creates multisig and enables address(this) as module.
++    /// @param agentInstance Agent instance address.
++    function _createMultisigWithSelfAsModule(address agentInstance) internal {
++        // Prepare Safe multisig data
++        uint256 localNonce = _nonce;
++        uint256 randomNonce = uint256(keccak256(abi.encodePacked(block.timestamp, msg.sender, localNonce)));
++
++        // Update global nonce
++        _nonce = localNonce + 1;
++
++        // Create Safe with self as owner
++        address[] memory owners = new address[](1);
++        owners[0] = address(this);
++        bytes memory data = abi.encode(fallbackHandler, randomNonce);
++        address multisig =
++            ISafeMultisigWithRecoveryModule(safeMultisigWithRecoveryModule).create(owners, THRESHOLD, data);
++
++        // Enable self as module
++        bytes32 r = bytes32(uint256(uint160(address(this))));
++        bytes memory signature = abi.encodePacked(r, bytes32(0), uint8(1));
++
++        //        // TODO multisend maybe?
++        //        // Encode enable module function call
++        //        data = abi.encodeCall(ISafe.enableModule, (address(this)));
++        //
++        //        // Execute multisig transaction
++        //        ISafe(multisig).execTransaction(
++        //            multisig, 0, data, ISafe.Operation.Call, 0, 0, 0, address(0), payable(address(0)), signature
++        //        );
++        //
++        //        // Encode swap owner function call
++        //        data = abi.encodeCall(ISafe.swapOwner, (address(0x1), address(this), agentInstance));
++        //
++        //        // Execute multisig transaction
++        //        ISafe(multisig).execTransaction(
++        //            multisig, 0, data, ISafe.Operation.Call, 0, 0, 0, address(0), payable(address(0)), signature
++        //        );
++
++        // Encode enable module function call
++        data = abi.encodeCall(ISafe.enableModule, (address(this)));
++        // MultiSend payload with the packed data of (operation, multisig address, value(0), payload length, payload)
++        bytes memory msPayload = abi.encodePacked(ISafe.Operation.Call, multisig, uint256(0), data.length, data);
++
++        // Encode swap owner function call
++        data = abi.encodeCall(ISafe.swapOwner, (address(0x1), address(this), agentInstance));
++        // Concatenate multi send payload with the packed data of (operation, multisig address, value(0), payload length, payload)
++        msPayload =
++            bytes.concat(msPayload, abi.encodePacked(ISafe.Operation.Call, multisig, uint256(0), data.length, data));
++
++        // Multisend call to execute all the payloads
++        msPayload = abi.encodeCall(IMultiSend.multiSend, (msPayload));
++
++        // Execute multisig transaction
++        bool success = ISafe(multisig)
++            .execTransaction(
++                multiSend,
++                0,
++                msPayload,
++                ISafe.Operation.DelegateCall,
++                0,
++                0,
++                0,
++                address(0),
++                payable(address(0)),
++                signature
++            );
++
++        // Check for success
++        if (!success) {
++            revert ExecutionFailed(multiSend, msPayload);
++        }
++    }
++
++    /// @dev Creates and / or (re-)deploys service and stakes it.
++    /// @param stakingProxy Staking proxy address.
++    /// @param minStakingDeposit Min staking deposit value.
++    /// @param serviceId Service Id.
++    /// @param agentId Agent Blueprint Id.
++    /// @param configHash Config hash.
++    /// @param agentInstance Agent instance address.
++    function _deployAndStake(
++        address stakingProxy,
++        uint256 minStakingDeposit,
++        uint256 serviceId,
++        uint256 agentId,
++        bytes32 configHash,
++        address agentInstance
++    ) internal returns (uint256) {
++        // Get service creation flag
++        bool createService = serviceId > 0 ? true : false;
++
++        // Set agent params
++        IService.AgentParams[] memory agentParams = new IService.AgentParams[](NUM_AGENT_INSTANCES);
++        agentParams[0] = IService.AgentParams(uint32(NUM_AGENT_INSTANCES), uint96(minStakingDeposit));
++
++        // Get agent Ids
++        uint32[] memory agentIds = new uint32[](NUM_AGENT_INSTANCES);
++        agentIds[0] = uint32(agentId);
++
++        // Set agent instances as [agentInstance]
++        address[] memory instances = new address[](NUM_AGENT_INSTANCES);
++        instances[0] = agentInstance;
++
++        if (createService) {
++            // Create a service owned by this contract
++            serviceId = IService(serviceManager)
++                .create(address(this), olas, configHash, agentIds, agentParams, uint32(THRESHOLD));
++        } else {
++            // Update service owned by this contract
++            IService(serviceManager).update(olas, configHash, agentIds, agentParams, uint32(THRESHOLD), serviceId);
++        }
++
++        // Activate registration (1 wei as a deposit wrapper)
++        IService(serviceManager).activateRegistration{value: 1}(serviceId);
++
++        // Register msg.sender as an agent instance (numAgentInstances wei as a bond wrapper)
++        IService(serviceManager).registerAgents{value: NUM_AGENT_INSTANCES}(serviceId, instances, agentIds);
++
++        address multisig;
++        if (createService) {
++            // Create multisig with address(this) as module and swap owners to agentInstance
++            _createMultisigWithSelfAsModule(agentInstance);
++
++            // Deploy service via same address multisig
++            multisig = IService(serviceManager).deploy(serviceId, safeSameAddressMultisig, abi.encodePacked(multisig));
++        } else {
++            // Re-deploy service
++            bytes memory data = abi.encode(serviceId);
++            multisig = IService(serviceManager).deploy(serviceId, safeSameAddressMultisig, data);
++        }
++
++        emit Deployed(serviceId, multisig);
++
++        // Approve service NFT for staking instance
++        INFToken(serviceRegistry).approve(stakingProxy, serviceId);
++
++        // Stake service
++        IStaking(stakingProxy).stake(serviceId);
++
++        return serviceId;
++    }
++
++    /// @dev Distributes rewards.
++    /// @return balance Amount drained.
++    function _distributeRewards(uint256 serviceId) internal returns (uint256 balance) {
++        // Get the service multisig
++        (, address multisig,,,,,) = IService(serviceRegistry).mapServices(serviceId);
++
++        // Get service curating agent address
++        address curatingAgent = mapServiceIdCuratingAgents[serviceId];
++
++        // Sanity checks
++        if (multisig == address(0) || curatingAgent == address(0)) {
++            revert ZeroAddress();
++        }
++
++        // Get multisig balance
++        balance = IToken(olas).balanceOf(multisig);
++
++        // Check for zero balance
++        if (balance > 0) {
++            // Calculate reward distribution
++            uint256 collectorAmount = (balance * collectorRewardFactor) / MAX_REWARD_FACTOR;
++            uint256 protocolAmount = (balance * protocolRewardFactor) / MAX_REWARD_FACTOR;
++            uint256 curatingAgentAmount = balance - collectorAmount - protocolAmount;
++
++            // Encode OLAS approve function call for collector
++            bytes memory data = abi.encodeCall(IToken.approve, (collector, collectorAmount + protocolAmount));
++            // MultiSend payload with the packed data of (operation, multisig address, value(0), payload length, payload)
++            bytes memory msPayload = abi.encodePacked(ISafe.Operation.Call, olas, uint256(0), data.length, data);
++
++            // Encode collector top-up function call for REWARD operation
++            data = abi.encodeCall(ICollector.topUpBalance, (collectorAmount, REWARD));
++            // Concatenate multi send payload with the packed data of (operation, multisig address, value(0), payload length, payload)
++            msPayload = bytes.concat(
++                msPayload, abi.encodePacked(ISafe.Operation.Call, collector, uint256(0), data.length, data)
++            );
++
++            // Encode collector top-up function call for protocol assets
++            data = abi.encodeCall(ICollector.topUpProtocol, (protocolAmount));
++            // Concatenate multi send payload with the packed data of (operation, multisig address, value(0), payload length, payload)
++            msPayload = bytes.concat(
++                msPayload, abi.encodePacked(ISafe.Operation.Call, collector, uint256(0), data.length, data)
++            );
++
++            // Encode OLAS transfer function call for curating agent
++            data = abi.encodeCall(IToken.transfer, (curatingAgent, curatingAgentAmount));
++            // Concatenate multi send payload with the packed data of (operation, multisig address, value(0), payload length, payload)
++            msPayload =
++                bytes.concat(msPayload, abi.encodePacked(ISafe.Operation.Call, olas, uint256(0), data.length, data));
++
++            // Multisend call to execute all the payloads
++            msPayload = abi.encodeCall(IMultiSend.multiSend, (msPayload));
++
++            // Execute module call
++            bool success =
++                ISafe(multisig).execTransactionFromModule(multiSend, 0, msPayload, ISafe.Operation.DelegateCall);
++
++            // Check for success
++            if (!success) {
++                revert ExecutionFailed(multiSend, msPayload);
++            }
++
++            emit RewardsDistributed(collectorAmount, protocolAmount, curatingAgentAmount);
++        }
++    }
++
++    /// @dev Stakes OLAS into specified staking proxy contract if balance is enough for staking.
++    /// @param stakingProxy Staking proxy address.
++    /// @param serviceId Service Id: non-zero if service is owned by address(this) and could be reused, zero otherwise.
++    /// @param agentId Agent Blueprint Id.
++    /// @param configHash Config hash.
++    /// @param agentInstance Agent instance address.
++    function stake(address stakingProxy, uint256 serviceId, uint256 agentId, bytes32 configHash, address agentInstance)
++        external
++    {
++        // Reentrancy guard
++        if (_locked > 1) {
++            revert ReentrancyGuard();
++        }
++        _locked = 2;
++
++        // Check for whitelisted staking proxy type
++        if (mapStakingProxyTypes[stakingProxy] == 0) {
++            revert ZeroValue();
++        }
++
++        // Sanity check
++        if (agentId == 0 || configHash == 0) {
++            revert ZeroValue();
++        }
++
++        // Get current unstaked balance
++        uint256 balance = IToken(olas).balanceOf(address(this));
++        uint256 minStakingDeposit = IStaking(stakingProxy).minStakingDeposit();
++        // Note: for now max number of agent instances is 1
++        uint256 fullStakingDeposit = minStakingDeposit * (1 + NUM_AGENT_INSTANCES);
++
++        // Check for balance
++        if (fullStakingDeposit > balance) {
++            revert Overflow(fullStakingDeposit, balance);
++        }
++
++        // Get current staked balance and update it
++        uint256 localStakedBalance = stakedBalance;
++        localStakedBalance += fullStakingDeposit;
++        stakedBalance = localStakedBalance;
++
++        // Record service curating agent
++        mapServiceIdCuratingAgents[serviceId] = msg.sender;
++
++        // Approve token for the serviceRegistryTokenUtility contract
++        IToken(olas).approve(serviceRegistryTokenUtility, fullStakingDeposit);
++
++        serviceId = _deployAndStake(stakingProxy, minStakingDeposit, serviceId, agentId, configHash, agentInstance);
++
++        emit ExternalServiceStaked(
++            msg.sender, stakingProxy, serviceId, agentId, configHash, fullStakingDeposit, localStakedBalance
++        );
++
++        _locked = 1;
++    }
++
++    /// @dev Unstakes, if needed, and withdraws specified amounts from specified staking contracts.
++    /// @param stakingProxy Staking proxy address.
++    /// @param serviceId Service Id.
++    /// @param operation Unstake operation type.
++    function unstake(address stakingProxy, uint256 serviceId, bytes32 operation) external virtual {
++        // Reentrancy guard
++        if (_locked > 1) {
++            revert ReentrancyGuard();
++        }
++        _locked = 2;
++
++        address serviceCuratingAgent = mapServiceIdCuratingAgents[serviceId];
++        // Check for access
++        if (msg.sender != owner && msg.sender != serviceCuratingAgent) {
++            revert UnauthorizedAccount(msg.sender);
++        }
++
++        // Get current unstake requested amount
++        uint256 unstakeRequestedAmount = mapUnstakeOperationRequestedAmounts[operation];
++
++        uint256 fullStakingDeposit;
++        uint256 localStakedBalance;
++        // Check if service unstake is requested
++        if (stakingProxy != address(0) && serviceId > 0) {
++            // Calculate how many unstakes are needed
++            uint256 minStakingDeposit = IStaking(stakingProxy).minStakingDeposit();
++            fullStakingDeposit = minStakingDeposit * (1 + NUM_AGENT_INSTANCES);
++
++            // Get current staked balance
++            localStakedBalance = stakedBalance;
++
++            // This must never happen because of how it was setup in first place
++            if (fullStakingDeposit > localStakedBalance) {
++                revert Overflow(fullStakingDeposit, localStakedBalance);
++            }
++
++            // Update staked balance
++            localStakedBalance -= fullStakingDeposit;
++            stakedBalance = localStakedBalance;
++
++            // Unstake, terminate and unbond service
++            IStaking(stakingProxy).unstake(serviceId);
++            IService(serviceManager).terminate(serviceId);
++            IService(serviceManager).unbond(serviceId);
++
++            // Distribute leftover rewards if not zero
++            _distributeRewards(serviceId);
++
++            // Clear curating agent since service is unstaked, terminated and unbonded
++            delete mapServiceIdCuratingAgents[serviceId];
++        }
++
++        uint256 amount = IToken(olas).balanceOf(address(this));
++        // Check if OLAS balance is not enough to cover requested unstake operation amount
++        if (unstakeRequestedAmount > amount) {
++            unstakeRequestedAmount -= amount;
++            // Update unstake requested amount
++            mapUnstakeOperationRequestedAmounts[operation] = unstakeRequestedAmount;
++        } else {
++            mapUnstakeOperationRequestedAmounts[operation] = 0;
++        }
++
++        // Approve OLAS for collector to initiate L1 transfer for corresponding operation later by agents / operators
++        IToken(olas).approve(collector, amount);
++
++        // Request top-up by Collector for a specific unstake operation
++        ICollector(collector).topUpBalance(amount, operation);
++
++        emit ExternalServiceUnstaked(
++            msg.sender, stakingProxy, serviceId, fullStakingDeposit, localStakedBalance, unstakeRequestedAmount
++        );
++
++        _locked = 1;
++    }
++
++    /// @dev Sets staking proxy types.
++    /// @param stakingProxies Set of staking proxies.
++    function setStakingProxyTypes(address[] memory stakingProxies) external {
++        // Check for the ownership
++        if (msg.sender != owner) {
++            revert OwnerOnly(msg.sender, owner);
++        }
++
++        uint256 numProxies = stakingProxies.length;
++        bytes32[] memory proxyTypes = new bytes32[](numProxies);
++
++        // Traverse staking proxies
++        for (uint256 i = 0; i < numProxies; ++i) {
++            // Check for zero address
++            if (stakingProxies[i] == address(0)) {
++                revert ZeroAddress();
++            }
++
++            // Note: for right now it is single type only
++            proxyTypes[i] = STAKING_TYPE_OLAS_V1;
++            mapStakingProxyTypes[stakingProxies[i]] = proxyTypes[i];
++        }
++
++        emit SetStakingProxyTypes(stakingProxies, proxyTypes);
++    }
++
++    /// @dev Deposits OLAS for further staking.
++    /// @param amount OLAS amount.
++    /// @param operation Stake operation type.
++    function deposit(uint256 amount, bytes32 operation) external {
++        // Reentrancy guard
++        if (_locked > 1) {
++            revert ReentrancyGuard();
++        }
++        _locked = 2;
++
++        // Get OLAS from l2StakingProcessor or any other account
++        IToken(olas).transferFrom(msg.sender, address(this), amount);
++
++        emit Deposit(msg.sender, amount, operation);
++
++        _locked = 1;
++    }
++
++    /// @dev Requests withdraw via specified unstake operation.
++    /// @param amount Unstake amount.
++    /// @param operation Unstake operation type.
++    function withdraw(uint256 amount, bytes32 operation) external {
++        // Reentrancy guard
++        if (_locked > 1) {
++            revert ReentrancyGuard();
++        }
++        _locked = 2;
++
++        // Check for l2StakingProcessor to be a sender
++        if (msg.sender != l2StakingProcessor) {
++            revert UnauthorizedAccount(msg.sender);
++        }
++
++        // Get current OLAS balance
++        uint256 olasBalance = IToken(olas).balanceOf(address(this));
++        // Get current staked balance
++        uint256 localStakedBalance = stakedBalance;
++        // Get overall amount
++        uint256 totalBalance = olasBalance + localStakedBalance;
++
++        // Check for overflow: this must never happen as checks are done on L1 side
++        if (amount > totalBalance) {
++            revert Overflow(amount, totalBalance);
++        }
++
++        uint256 unstakeRequestedAmount;
++
++        // Check if OLAS balance is not enough to cover withdraw request
++        if (amount > olasBalance) {
++            unstakeRequestedAmount = amount - olasBalance;
++            amount = olasBalance;
++
++            mapUnstakeOperationRequestedAmounts[operation] += unstakeRequestedAmount;
++        }
++
++        // Check for zero amount
++        if (amount > 0) {
++            // Approve OLAS for collector to initiate L1 transfer for corresponding operation later by agents / operators
++            IToken(olas).approve(collector, amount);
++
++            // Request top-up by Collector for a specific unstake operation
++            ICollector(collector).topUpBalance(amount, operation);
++        }
++
++        emit Withdraw(msg.sender, amount, operation, unstakeRequestedAmount);
++
++        _locked = 1;
++    }
++
++    /// @dev Claims specified service rewards.
++    /// @param stakingProxies Set of staking proxy addresses.
++    /// @param serviceIds Corresponding set if service Ids.
++    /// @return rewards Set of staking rewards.
++    function claim(address[] memory stakingProxies, uint256[] memory serviceIds)
++        external
++        returns (uint256[] memory rewards)
++    {
++        // Reentrancy guard
++        if (_locked > 1) {
++            revert ReentrancyGuard();
++        }
++        _locked = 2;
++
++        // Get number of proxies
++        uint256 numProxies = stakingProxies.length;
++
++        // TODO
++        // Check for correct array length
++        if (serviceIds.length != numProxies) {
++            revert();
++        }
++
++        // Allocate rewards array
++        rewards = new uint256[](numProxies);
++
++        // Claim rewards
++        for (uint256 i = 0; i < numProxies; ++i) {
++            rewards[i] = IStaking(stakingProxies[i]).claim(serviceIds[i]);
++        }
++
++        // Distribute rewards
++        for (uint256 i = 0; i < numProxies; ++i) {
++            _distributeRewards(serviceIds[i]);
++        }
++
++        emit Claimed(stakingProxies, serviceIds, rewards);
++
++        _locked = 1;
++    }
++
++    /// @dev Receives native funds for mock Service Registry minimal payments.
++    receive() external payable {
++        emit NativeTokenReceived(msg.value);
++    }
++}
+diff --git a/contracts/l2/StakingManager.sol b/contracts/l2/StakingManager.sol
+index 3a339da..19e5a7d 100644
+--- a/contracts/l2/StakingManager.sol
++++ b/contracts/l2/StakingManager.sol
+@@ -37,21 +37,6 @@ interface IActivityModule {
+     function drain() external returns (uint256 balance);
+ }
+ 
+-// Bridge interface
+-interface IBridge {
+-    /// @dev Relays OLAS to L1.
+-    /// @param to Address to send tokens to.
+-    /// @param olasAmount OLAS amount.
+-    function relayToL1(address to, uint256 olasAmount, bytes memory) external payable;
+-}
+-
+-// Multisig interface
+-interface IMultisig {
+-    /// @dev Returns array of owners.
+-    /// @return Array of Safe owners.
+-    function getOwners() external view returns (address[] memory);
+-}
+-
+ /// @dev Zero value.
+ error ZeroValue();
+ 
+@@ -93,9 +78,9 @@ contract StakingManager is Implementation, ERC721TokenReceiver {
+     // Threshold
+     uint256 public constant THRESHOLD = 1;
+ 
+-    // Contributor agent Id
++    // LST agent Id
+     uint256 public immutable agentId;
+-    // Contributor service config hash
++    // LST service config hash
+     bytes32 public immutable configHash;
+     // Service manager address
+     address public immutable serviceManager;
+@@ -139,7 +124,7 @@ contract StakingManager is Implementation, ERC721TokenReceiver {
+     // Mapping of staking proxy address => last staked service Id index in mapStakedServiceIds corresponding set
+     mapping(address => uint256) public mapLastStakedServiceIdxs;
+ 
+-    /// @dev StakerL2 constructor.
++    /// @dev StakingManager constructor.
+     /// @param _olas OLAS token address.
+     /// @param _serviceManager Service manager address.
+     /// @param _stakingFactory Staking factory address.
+@@ -147,8 +132,8 @@ contract StakingManager is Implementation, ERC721TokenReceiver {
+     /// @param _safeL2 SafeL2 contract address.
+     /// @param _beacon Activity module beacon.
+     /// @param _collector OLAS collector address.
+-    /// @param _agentId Contributor agent Id.
+-    /// @param _configHash Contributor service config hash.
++    /// @param _agentId LST agent Id.
++    /// @param _configHash LST service config hash.
+     constructor(
+         address _olas,
+         address _serviceManager,
+diff --git a/contracts/l2/bridging/BaseStakingProcessorL2.sol b/contracts/l2/bridging/BaseStakingProcessorL2.sol
+index 43e618b..4c7f312 100644
+--- a/contracts/l2/bridging/BaseStakingProcessorL2.sol
++++ b/contracts/l2/bridging/BaseStakingProcessorL2.sol
+@@ -51,6 +51,7 @@ contract BaseStakingProcessorL2 is DefaultStakingProcessorL2 {
+     /// @dev GnosisTargetDispenserL2 constructor.
+     /// @param _olas OLAS token address.
+     /// @param _stakingManager StakingManager address.
++    /// @param _externalStakingDistributor ExternalStakingDistributor address.
+     /// @param _collector Collector address.
+     /// @param _l2TokenRelayer L2 token relayer bridging contract address.
+     /// @param _l2MessageRelayer L2 message relayer bridging contract address (AMBHomeProxy).
+@@ -59,6 +60,7 @@ contract BaseStakingProcessorL2 is DefaultStakingProcessorL2 {
+     constructor(
+         address _olas,
+         address _stakingManager,
++        address _externalStakingDistributor,
+         address _collector,
+         address _l2TokenRelayer,
+         address _l2MessageRelayer,
+@@ -68,6 +70,7 @@ contract BaseStakingProcessorL2 is DefaultStakingProcessorL2 {
+         DefaultStakingProcessorL2(
+             _olas,
+             _stakingManager,
++            _externalStakingDistributor,
+             _collector,
+             _l2TokenRelayer,
+             _l2MessageRelayer,
+diff --git a/contracts/l2/bridging/DefaultStakingProcessorL2.sol b/contracts/l2/bridging/DefaultStakingProcessorL2.sol
+index 62ee10f..9a86935 100644
+--- a/contracts/l2/bridging/DefaultStakingProcessorL2.sol
++++ b/contracts/l2/bridging/DefaultStakingProcessorL2.sol
+@@ -29,6 +29,18 @@ interface IStakingManager {
+     function unstake(address stakingProxy, uint256 amount, bytes32 operation) external;
+ }
+ 
++interface IExternalStakingDistributor {
++    /// @dev Deposits OLAS for further staking.
++    /// @param amount OLAS amount.
++    /// @param operation Stake operation type.
++    function deposit(uint256 amount, bytes32 operation) external;
++
++    /// @dev Requests withdraw via specified unstake operation.
++    /// @param amount Unstake amount.
++    /// @param operation Unstake operation type.
++    function withdraw(uint256 amount, bytes32 operation) external;
++}
++
+ // Necessary ERC20 token interface
+ interface IToken {
+     /// @dev Sets `amount` as the allowance of `spender` over the caller's tokens.
+@@ -90,6 +102,8 @@ abstract contract DefaultStakingProcessorL2 is IBridgeErrors {
+     address public immutable olas;
+     // Staking manager address
+     address public immutable stakingManager;
++    // External staking distributor address
++    address public immutable externalStakingDistributor;
+     // Collector address
+     address public immutable collector;
+     // L2 Relayer address that receives the message across the bridge from the source L1 network
+@@ -115,6 +129,7 @@ abstract contract DefaultStakingProcessorL2 is IBridgeErrors {
+     /// @dev DefaultStakerL2 constructor.
+     /// @param _olas OLAS token address on L2.
+     /// @param _stakingManager StakingManager address.
++    /// @param _externalStakingDistributor ExternalStakingDistributor address.
+     /// @param _collector Collector address.
+     /// @param _l2TokenRelayer L2 token relayer bridging contract address.
+     /// @param _l2MessageRelayer L2 message relayer bridging contract address.
+@@ -122,6 +137,7 @@ abstract contract DefaultStakingProcessorL2 is IBridgeErrors {
+     constructor(
+         address _olas,
+         address _stakingManager,
++        address _externalStakingDistributor,
+         address _collector,
+         address _l2TokenRelayer,
+         address _l2MessageRelayer,
+@@ -130,8 +146,9 @@ abstract contract DefaultStakingProcessorL2 is IBridgeErrors {
+     ) {
+         // Check for zero addresses
+         if (
+-            _olas == address(0) || _stakingManager == address(0) || _collector == address(0)
+-                || _l2TokenRelayer == address(0) || _l2MessageRelayer == address(0) || _l1DepositProcessor == address(0)
++            _olas == address(0) || _stakingManager == address(0) || _externalStakingDistributor == address(0)
++                || _collector == address(0) || _l2TokenRelayer == address(0) || _l2MessageRelayer == address(0)
++                || _l1DepositProcessor == address(0)
+         ) {
+             revert ZeroAddress();
+         }
+@@ -149,6 +166,7 @@ abstract contract DefaultStakingProcessorL2 is IBridgeErrors {
+         // Immutable parameters assignment
+         olas = _olas;
+         stakingManager = _stakingManager;
++        externalStakingDistributor = _externalStakingDistributor;
+         collector = _collector;
+         l2TokenRelayer = _l2TokenRelayer;
+         l2MessageRelayer = _l2MessageRelayer;
+@@ -194,12 +212,22 @@ abstract contract DefaultStakingProcessorL2 is IBridgeErrors {
+ 
+                 // Check the OLAS balance and the contract being unpaused
+                 if (olasBalance >= amount) {
+-                    // Approve OLAS for stakingManager
+-                    IToken(olas).approve(stakingManager, amount);
+-
+-                    // This is a low level call since it must never revert
+-                    bytes memory stakeData = abi.encodeCall(IStakingManager.stake, (target, amount, operation));
+-                    (success,) = stakingManager.call(stakeData);
++                    if (target == externalStakingDistributor) {
++                        // Approve OLAS for externalStakingDistributor
++                        IToken(olas).approve(externalStakingDistributor, amount);
++
++                        // This is a low level call since it must never revert
++                        bytes memory stakeData =
++                            abi.encodeCall(IExternalStakingDistributor.deposit, (amount, operation));
++                        (success,) = externalStakingDistributor.call(stakeData);
++                    } else {
++                        // Approve OLAS for stakingManager
++                        IToken(olas).approve(stakingManager, amount);
++
++                        // This is a low level call since it must never revert
++                        bytes memory stakeData = abi.encodeCall(IStakingManager.stake, (target, amount, operation));
++                        (success,) = stakingManager.call(stakeData);
++                    }
+                 } else {
+                     // Insufficient OLAS balance
+                     status = RequestStatus.INSUFFICIENT_OLAS_BALANCE;
+@@ -210,9 +238,14 @@ abstract contract DefaultStakingProcessorL2 is IBridgeErrors {
+             }
+         } else if (operation == UNSTAKE || operation == UNSTAKE_RETIRED) {
+             // Note that if UNSTAKE* is requested, it must be finalized in any case since changes are recorded on L1
+-            // This is a low level call since it must never revert
+-            bytes memory unstakeData = abi.encodeCall(IStakingManager.unstake, (target, amount, operation));
+-            (success,) = stakingManager.call(unstakeData);
++            // These are low level calls since they must never revert
++            if (target == externalStakingDistributor) {
++                bytes memory unstakeData = abi.encodeCall(IExternalStakingDistributor.withdraw, (amount, operation));
++                (success,) = stakingManager.call(unstakeData);
++            } else {
++                bytes memory unstakeData = abi.encodeCall(IStakingManager.unstake, (target, amount, operation));
++                (success,) = stakingManager.call(unstakeData);
++            }
+         } else {
+             // Unsupported operation type
+             status = RequestStatus.UNSUPPORTED_OPERATION_TYPE;
+diff --git a/contracts/l2/bridging/GnosisStakingProcessorL2.sol b/contracts/l2/bridging/GnosisStakingProcessorL2.sol
+index ac80704..4960be4 100644
+--- a/contracts/l2/bridging/GnosisStakingProcessorL2.sol
++++ b/contracts/l2/bridging/GnosisStakingProcessorL2.sol
+@@ -31,6 +31,7 @@ contract GnosisStakingProcessorL2 is DefaultStakingProcessorL2 {
+     /// @dev GnosisTargetDispenserL2 constructor.
+     /// @param _olas OLAS token address.
+     /// @param _stakingManager StakingManager address.
++    /// @param _externalStakingDistributor ExternalStakingDistributor address.
+     /// @param _collector Collector address.
+     /// @param _l2TokenRelayer L2 token relayer bridging contract address.
+     /// @param _l2MessageRelayer L2 message relayer bridging contract address (AMBHomeProxy).
+@@ -39,6 +40,7 @@ contract GnosisStakingProcessorL2 is DefaultStakingProcessorL2 {
+     constructor(
+         address _olas,
+         address _stakingManager,
++        address _externalStakingDistributor,
+         address _collector,
+         address _l2TokenRelayer,
+         address _l2MessageRelayer,
+@@ -48,6 +50,7 @@ contract GnosisStakingProcessorL2 is DefaultStakingProcessorL2 {
+         DefaultStakingProcessorL2(
+             _olas,
+             _stakingManager,
++            _externalStakingDistributor,
+             _collector,
+             _l2TokenRelayer,
+             _l2MessageRelayer,
+diff --git a/contracts/test/ABICreator.sol b/contracts/test/ABICreator.sol
+index be6025d..2f83883 100644
+--- a/contracts/test/ABICreator.sol
++++ b/contracts/test/ABICreator.sol
+@@ -17,6 +17,9 @@ import {ServiceManagerProxy} from "../../lib/autonolas-registries/contracts/Serv
+ import {GnosisSafeMultisig} from "../../lib/autonolas-registries/contracts/multisigs/GnosisSafeMultisig.sol";
+ import {GnosisSafeSameAddressMultisig} from
+     "../../lib/autonolas-registries/contracts/multisigs/GnosisSafeSameAddressMultisig.sol";
++import {RecoveryModule} from "../../lib/autonolas-registries/contracts/multisigs/RecoveryModule.sol";
++import {SafeMultisigWithRecoveryModule} from
++    "../../lib/autonolas-registries/contracts/multisigs/SafeMultisigWithRecoveryModule.sol";
+ import {StakingVerifier} from "../../lib/autonolas-registries/contracts/staking/StakingVerifier.sol";
+ import {StakingFactory} from "../../lib/autonolas-registries/contracts/staking/StakingFactory.sol";
+ import {ERC20Token} from "../../lib/autonolas-registries/contracts/test/ERC20Token.sol";
+diff --git a/doc/architecture-diagrams.md b/doc/architecture-diagrams.md
+index cb58659..c7f725a 100755
+--- a/doc/architecture-diagrams.md
++++ b/doc/architecture-diagrams.md
+@@ -91,16 +91,19 @@ sequenceDiagram
+   participant S as Services
+   participant BP2 as Bridge (L2)
+ 
+-  %% A) Deposit -> Mint
++  %% A) Deposit -> Mint stOLAS -> STAKE
+   U->>D: deposit OLAS
+-  D->>V: deposit / topUp
++  D->>V: deposit / topUp OLAS
+   V-->>U: mint stOLAS (pps-based)
++  D->>BP1: bridge OLAS + msg (STAKE)
++  BP1->>SM: stake / accumulate OLAS until stake deposit is reached
++  SM->>STL: stake service
+ 
+   %% B) Rewards (REWARD -> Distributor)
+-  S->>SM: produce rewards
++  S->>STL: deliver KPIs to produce rewards
+   SM->>STL: update accrual
+   STL->>Coll: send REWARD op
+-  Coll->>BP2: bridge OLAS+msg
++  Coll->>BP2: bridge OLAS
+   BP2->>BP1: relay
+   BP1->>Dist: deliver OLAS (REWARD)
+   Dist->>V: top up vault balance
+@@ -113,7 +116,7 @@ sequenceDiagram
+     D->>SM: init UNSTAKE
+     SM->>STL: process unstake
+     STL->>Coll: send UNSTAKE
+-    Coll->>BP2: bridge
++    Coll->>BP2: bridge OLAS
+     BP2->>BP1: relay
+     BP1->>T: deliver OLAS (UNSTAKE)
+   end
+@@ -121,7 +124,7 @@ sequenceDiagram
+ 
+   %% D) Retired flow (UNSTAKE_RETIRED -> UnstakeRelayer)
+   STL->>Coll: send UNSTAKE_RETIRED
+-  Coll->>BP2: bridge
++  Coll->>BP2: bridge OLAS
+   BP2->>BP1: relay
+   BP1->>UR: deliver OLAS (UNSTAKE_RETIRED)
+   UR->>V: top up retired balance
+diff --git a/test/LiquidStaking.js b/test/LiquidStaking.js
+index 92264c1..e09a6fe 100644
+--- a/test/LiquidStaking.js
++++ b/test/LiquidStaking.js
+@@ -19,6 +19,8 @@ describe("Liquid Staking", function () {
+     let multiSend;
+     let gnosisSafeMultisig;
+     let gnosisSafeSameAddressMultisig;
++    let recoveryModule;
++    let safeMultisigWithRecoveryModule;
+     let activityChecker;
+     let stakingFactory;
+     let stakingVerifier;
+@@ -32,6 +34,7 @@ describe("Liquid Staking", function () {
+     let bridgeRelayer;
+     let activityModule;
+     let stakingManager;
++    let externalStakingDistributor;
+     let stakingTokenImplementation;
+     let stakingTokenInstance;
+     let gnosisDepositProcessorL1;
+@@ -87,6 +90,12 @@ describe("Liquid Staking", function () {
+     const rewardOperation = "0x0b9821ae606ebc7c79bf3390bdd3dc93e1b4a7cda27aad60646e7b88ff55b001";
+     const unstakeOperation = "0x8ca9a95e41b5eece253c93f5b31eed1253aed6b145d8a6e14d913fdf8e732293";
+     const unstakeRetiredOperation = "0x9065ad15d9673159e4597c86084aff8052550cec93c5a6e44b3f1dba4c8731b3";
++    // Collector reward factor
++    const collectorRewardFactor = "8000";
++    // Protocol reward factor
++    const protocolRewardFactor = "1750";
++    // Curating agent reward factor
++    const curatingAgentRewardFactor = "250";
+ 
+     beforeEach(async function () {
+         signers = await ethers.getSigners();
+@@ -158,6 +167,15 @@ describe("Liquid Staking", function () {
+         gnosisSafeSameAddressMultisig = await GnosisSafeSameAddressMultisig.deploy(bytecodeHash);
+         await gnosisSafeSameAddressMultisig.deployed();
+ 
++        const RecoveryModule = await ethers.getContractFactory("RecoveryModule");
++        recoveryModule = await RecoveryModule.deploy(multiSend.address, serviceRegistry.address);
++        await recoveryModule.deployed();
++
++        const SafeMultisigWithRecoveryModule = await ethers.getContractFactory("SafeMultisigWithRecoveryModule");
++        safeMultisigWithRecoveryModule = await SafeMultisigWithRecoveryModule.deploy(gnosisSafe.address,
++            gnosisSafeProxyFactory.address, recoveryModule.address);
++        await safeMultisigWithRecoveryModule.deployed();
++
+         const ERC20Token = await ethers.getContractFactory("ERC20Token");
+         olas = await ERC20Token.deploy();
+         await olas.deployed();
+@@ -283,6 +301,23 @@ describe("Liquid Staking", function () {
+         // Fund staking manager with native to support staking creation
+         await deployer.sendTransaction({to: stakingManager.address, value: ethers.utils.parseEther("1")});
+ 
++        const ExternalStakingDistributor = await ethers.getContractFactory("ExternalStakingDistributor");
++        externalStakingDistributor = await ExternalStakingDistributor.deploy(olas.address, serviceManager.address,
++            safeMultisigWithRecoveryModule.address, gnosisSafeSameAddressMultisig.address, fallbackHandler.address,
++            multiSend.address, collector.address);
++        await externalStakingDistributor.deployed();
++
++        // Initialize externalStakingDistributor
++        const ExternalStakingDistributorProxy = await ethers.getContractFactory("Proxy");
++        initPayload = externalStakingDistributor.interface.encodeFunctionData("initialize", [collectorRewardFactor,
++            protocolRewardFactor, curatingAgentRewardFactor]);
++        const externalStakingDistributorProxy = await ExternalStakingDistributorProxy.deploy(externalStakingDistributor.address, initPayload);
++        await externalStakingDistributorProxy.deployed();
++        externalStakingDistributor = await ethers.getContractAt("ExternalStakingDistributor", externalStakingDistributorProxy.address);
++
++        // Fund staking manager with native to support staking creation
++        await deployer.sendTransaction({to: stakingManager.address, value: ethers.utils.parseEther("1")});
++
+         const BridgeRelayer = await ethers.getContractFactory("BridgeRelayer");
+         bridgeRelayer = await BridgeRelayer.deploy(olas.address);
+         await bridgeRelayer.deployed();
+@@ -293,7 +328,7 @@ describe("Liquid Staking", function () {
+         await gnosisDepositProcessorL1.deployed();
+ 
+         const GnosisStakingProcessorL2 = await ethers.getContractFactory("GnosisStakingProcessorL2");
+-        gnosisStakingProcessorL2 = await GnosisStakingProcessorL2.deploy(olas.address, stakingManager.address,
++        gnosisStakingProcessorL2 = await GnosisStakingProcessorL2.deploy(olas.address, stakingManager.address, externalStakingDistributor.address,
+             collector.address, bridgeRelayer.address, bridgeRelayer.address, gnosisDepositProcessorL1.address, chainId);
+         await gnosisStakingProcessorL2.deployed();
+ 
+@@ -306,6 +341,9 @@ describe("Liquid Staking", function () {
+         // changeStakingProcessorL2 for stakingManager
+         await stakingManager.changeStakingProcessorL2(gnosisStakingProcessorL2.address);
+ 
++        // changeStakingProcessorL2 for externalStakingDistributor
++        await externalStakingDistributor.changeStakingProcessorL2(gnosisStakingProcessorL2.address);
++
+         // Set the gnosisStakingProcessorL2 address in gnosisDepositProcessorL1
+         await gnosisDepositProcessorL1.setL2StakingProcessor(gnosisStakingProcessorL2.address);
+ 
+@@ -437,8 +475,8 @@ describe("Liquid Staking", function () {
+             // Request withdraw
+             console.log("User requests withdraw of small amount of stOLAS:", stAmount.toString());
+             previewAmount = await st.previewRedeem(stAmount);
+-            let tx = await treasury.requestToWithdraw(stAmount, [gnosisChainId], [stakingTokenInstance.address],
+-                [bridgePayload], [0]);
++            let tx = await treasury.requestToWithdraw(stAmount, [[], [gnosisChainId]], [], [stakingTokenInstance.address],
++                [[], [bridgePayload]], [[], [0]]);
+             let res = await tx.wait();
+             // Get withdraw request Id
+             //console.log(res.logs);
+@@ -466,8 +504,8 @@ describe("Liquid Staking", function () {
+             stBalance = await st.balanceOf(deployer.address);
+             console.log("User requests withdraw of all remaining stOLAS:", stBalance.toString());
+             previewAmount = await st.previewRedeem(stBalance);
+-            tx = await treasury.requestToWithdraw(stBalance, [gnosisChainId], [stakingTokenInstance.address],
+-                [bridgePayload], [0]);
++            tx = await treasury.requestToWithdraw(stBalance, [[], [gnosisChainId]], [], [stakingTokenInstance.address],
++                [[], [bridgePayload]], [[], [0]]);
+             res = await tx.wait();
+             // Get withdraw request Id
+             //console.log(res.logs);
+@@ -598,8 +636,8 @@ describe("Liquid Staking", function () {
+             // Request withdraw
+             console.log("User requests withdraw of half of stOLAS:", stAmount.toString());
+             previewAmount = await st.previewRedeem(stAmount);
+-            let tx = await treasury.requestToWithdraw(stAmount, [gnosisChainId], [stakingTokenInstance.address],
+-                [bridgePayload], [0]);
++            let tx = await treasury.requestToWithdraw(stAmount, [[], [gnosisChainId]], [], [stakingTokenInstance.address],
++                [[], [bridgePayload]], [[], [0]]);
+             let res = await tx.wait();
+             // Get withdraw request Id
+             //console.log(res.logs);
+@@ -627,8 +665,8 @@ describe("Liquid Staking", function () {
+             stBalance = await st.balanceOf(deployer.address);
+             console.log("User requests withdraw of all remaining stOLAS:", stBalance.toString());
+             previewAmount = await st.previewRedeem(stBalance);
+-            tx = await treasury.requestToWithdraw(stBalance, [gnosisChainId], [stakingTokenInstance.address],
+-                [bridgePayload], [0]);
++            tx = await treasury.requestToWithdraw(stBalance, [[], [gnosisChainId]], [], [stakingTokenInstance.address],
++                [[], [bridgePayload]], [[], [0]]);
+             res = await tx.wait();
+             // Get withdraw request Id
+             //console.log(res.logs);
+@@ -752,8 +790,8 @@ describe("Liquid Staking", function () {
+             // Request withdraw
+             console.log("User requests withdraw of half of stOLAS:", stAmount.toString());
+             previewAmount = await st.previewRedeem(stAmount);
+-            let tx = await treasury.requestToWithdraw(stAmount, [gnosisChainId], [stakingTokenInstance.address],
+-                [bridgePayload], [0]);
++            let tx = await treasury.requestToWithdraw(stAmount, [[], [gnosisChainId]], [], [stakingTokenInstance.address],
++                [[], [bridgePayload]], [[], [0]]);
+             let res = await tx.wait();
+             // Get withdraw request Id
+             //console.log(res.logs);
+@@ -881,7 +919,7 @@ describe("Liquid Staking", function () {
+             let bridgePayloads = new Array(numUnstakes).fill(bridgePayload);
+             let values = new Array(numUnstakes).fill(0);
+             previewAmount = await st.previewRedeem(stBalance);
+-            tx = await treasury.requestToWithdraw(stBalance, chainIds, stakingInstances,bridgePayloads, values);
++            tx = await treasury.requestToWithdraw(stBalance, [[], chainIds], [], stakingInstances, [[], bridgePayloads], [[], values]);
+             res = await tx.wait();
+             // Get withdraw request Id
+             //console.log(res.logs);
+@@ -1034,7 +1072,7 @@ describe("Liquid Staking", function () {
+                 console.log("Iteration:", i);
+                 const previewAmount = await st.previewRedeem(stAmount);
+                 console.log("previewAmount:", previewAmount.toString());
+-                let tx = await treasury.requestToWithdraw(stAmount, chainIds, stakingInstances, bridgePayloads, values);
++                let tx = await treasury.requestToWithdraw(stAmount, [[], chainIds], [], stakingInstances, [[], bridgePayloads], [[], values]);
+                 let res = await tx.wait();
+                 // Get withdraw request Id
+                 //console.log(res.logs);
+@@ -1246,7 +1284,7 @@ describe("Liquid Staking", function () {
+                 // Request withdraw
+                 console.log("User requests withdraw of half of stOLAS:", stAmount.toString());
+                 previewAmount = await st.previewRedeem(stAmount);
+-                let tx = await treasury.requestToWithdraw(stAmount, chainIds, stakingInstances, bridgePayloads, values);
++                let tx = await treasury.requestToWithdraw(stAmount, [[], chainIds], [], stakingInstances, [[], bridgePayloads], [[], values]);
+                 let res = await tx.wait();
+                 // Get withdraw request Id
+                 //console.log(res.logs);
+@@ -1316,7 +1354,7 @@ describe("Liquid Staking", function () {
+                 // Request withdraw
+                 console.log("User requests partial withdraw of stOLAS:", stAmount.toString());
+                 const previewAmount = await st.previewRedeem(stAmount);
+-                let tx = await treasury.requestToWithdraw(stAmount, chainIds, stakingInstances, bridgePayloads, values);
++                let tx = await treasury.requestToWithdraw(stAmount, [[], chainIds], [], stakingInstances, [[], bridgePayloads], [[], values]);
+                 let res = await tx.wait();
+                 // Get withdraw request Id
+                 //console.log(res.logs);
+diff --git a/test/LiquidStaking.t.sol b/test/LiquidStaking.t.sol
+index e4e3152..4128dbc 100755
+--- a/test/LiquidStaking.t.sol
++++ b/test/LiquidStaking.t.sol
+@@ -21,6 +21,8 @@ import {ServiceManager} from "@registries/contracts/ServiceManager.sol";
+ import {ServiceManagerProxy} from "@registries/contracts/ServiceManagerProxy.sol";
+ import {GnosisSafeMultisig} from "@registries/contracts/multisigs/GnosisSafeMultisig.sol";
+ import {GnosisSafeSameAddressMultisig} from "@registries/contracts/multisigs/GnosisSafeSameAddressMultisig.sol";
++import {SafeMultisigWithRecoveryModule} from "@registries/contracts/multisigs/SafeMultisigWithRecoveryModule.sol";
++import {RecoveryModule} from "@registries/contracts/multisigs/RecoveryModule.sol";
+ import {StakingVerifier} from "@registries/contracts/staking/StakingVerifier.sol";
+ import {StakingFactory} from "@registries/contracts/staking/StakingFactory.sol";
+ 
+@@ -35,6 +37,7 @@ import {GnosisDepositProcessorL1} from "../contracts/l1/bridging/GnosisDepositPr
+ import {Collector} from "../contracts/l2/Collector.sol";
+ import {ActivityModule} from "../contracts/l2/ActivityModule.sol";
+ import {StakingManager} from "../contracts/l2/StakingManager.sol";
++import {ExternalStakingDistributor} from "../contracts/l2/ExternalStakingDistributor.sol";
+ import {ModuleActivityChecker} from "../contracts/l2/ModuleActivityChecker.sol";
+ import {StakingTokenLocked} from "../contracts/l2/StakingTokenLocked.sol";
+ import {GnosisStakingProcessorL2} from "../contracts/l2/bridging/GnosisStakingProcessorL2.sol";
+@@ -62,6 +65,8 @@ contract LiquidStakingTest is Test {
+ 
+     GnosisSafeMultisig internal gnosisSafeMultisig;
+     GnosisSafeSameAddressMultisig internal gnosisSafeSameAddressMultisig;
++    RecoveryModule internal recoveryModule;
++    SafeMultisigWithRecoveryModule internal safeMultisigWithRecoveryModule;
+     StakingVerifier internal stakingVerifier;
+     StakingFactory internal stakingFactory;
+ 
+@@ -75,6 +80,7 @@ contract LiquidStakingTest is Test {
+     Collector internal collector;
+     ActivityModule internal activityModule;
+     StakingManager internal stakingManager;
++    ExternalStakingDistributor internal externalStakingDistributor;
+     GnosisStakingProcessorL2 internal gnosisStakingProcessorL2;
+     ModuleActivityChecker internal moduleActivityChecker;
+     StakingTokenLocked internal stakingTokenInstance;
+@@ -121,6 +127,13 @@ contract LiquidStakingTest is Test {
+     // Bridge payload
+     bytes public constant BRIDGE_PAYLOAD = "";
+ 
++    // Collector reward factor
++    uint256 public collectorRewardFactor = 8_000;
++    // Protocol reward factor
++    uint256 public protocolRewardFactor = 1_750;
++    // Curating agent reward factor
++    uint256 public curatingAgentRewardFactor = 250;
++
+ 
+     function setUp() public virtual {
+         utils = new Utils();
+@@ -156,6 +169,9 @@ contract LiquidStakingTest is Test {
+ 
+         gnosisSafeMultisig = new GnosisSafeMultisig(payable(address(gnosisSafe)), address(gnosisSafeProxyFactory));
+         gnosisSafeSameAddressMultisig = new GnosisSafeSameAddressMultisig(multisigProxyHash);
++        recoveryModule = new RecoveryModule(address(multiSend), address(serviceRegistry));
++        safeMultisigWithRecoveryModule = new SafeMultisigWithRecoveryModule(address(gnosisSafe),
++            address(gnosisSafeProxyFactory), address(recoveryModule));
+ 
+         // Deploying OLAS mock and minting to deployer, operator and a current contract
+         olas = new ERC20Token();
+@@ -231,11 +247,23 @@ contract LiquidStakingTest is Test {
+         // Fund staking manager with native to support staking creation
+         vm.deal(address(stakingManager), 1 ether);
+ 
++        ExternalStakingDistributor externalStakingDistributorImplementation = new ExternalStakingDistributor(address(olas),
++            address(serviceManager), address(safeMultisigWithRecoveryModule), address(gnosisSafeSameAddressMultisig),
++            address(fallbackHandler), address(multiSend), address(collector));
++        initPayload = abi.encodeWithSelector(externalStakingDistributorImplementation.initialize.selector, collectorRewardFactor,
++            protocolRewardFactor, curatingAgentRewardFactor);
++        Proxy externalStakingDistributorProxy = new Proxy(address(externalStakingDistributorImplementation), initPayload);
++        externalStakingDistributor = ExternalStakingDistributor(payable(address(externalStakingDistributorProxy)));
++
++        // Fund external staking distributor with native to support staking creation
++        vm.deal(address(externalStakingDistributor), 1 ether);
++
+         bridgeRelayer = new BridgeRelayer(address(olas));
+         gnosisDepositProcessorL1 = new GnosisDepositProcessorL1(address(olas), address(depository), address(bridgeRelayer),
+             address(bridgeRelayer));
+-        gnosisStakingProcessorL2 = new GnosisStakingProcessorL2(address(olas), address(stakingManager), address(collector),
+-            address(bridgeRelayer), address(bridgeRelayer), address(gnosisDepositProcessorL1), CHAIN_ID);
++
++        gnosisStakingProcessorL2 = new GnosisStakingProcessorL2(address(olas), address(stakingManager), address(externalStakingDistributor),
++            address(collector), address(bridgeRelayer), address(bridgeRelayer), address(gnosisDepositProcessorL1), CHAIN_ID);
+ 
+         // changeStakingManager for collector
+         collector.changeStakingManager(address(stakingManager));
+@@ -246,6 +274,9 @@ contract LiquidStakingTest is Test {
+         // changeStakingProcessorL2 for stakingManager
+         stakingManager.changeStakingProcessorL2(address(gnosisStakingProcessorL2));
+ 
++        // changeStakingProcessorL2 for externalStakingDistributor
++        externalStakingDistributor.changeStakingProcessorL2(address(gnosisStakingProcessorL2));
++
+         // Set the gnosisStakingProcessorL2 address in gnosisDepositProcessorL1
+         gnosisDepositProcessorL1.setL2StakingProcessor(address(gnosisStakingProcessorL2));
+ 

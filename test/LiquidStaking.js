@@ -2,6 +2,7 @@
 const { expect } = require("chai");
 const { ethers } = require("hardhat");
 const helpers = require("@nomicfoundation/hardhat-network-helpers");
+const safeContracts = require("@gnosis.pm/safe-contracts");
 
 describe("Liquid Staking", function () {
     let serviceRegistry;
@@ -19,7 +20,10 @@ describe("Liquid Staking", function () {
     let multiSend;
     let gnosisSafeMultisig;
     let gnosisSafeSameAddressMultisig;
+    let recoveryModule;
+    let safeMultisigWithRecoveryModule;
     let activityChecker;
+    let externalActivityChecker;
     let stakingFactory;
     let stakingVerifier;
     let lock;
@@ -32,7 +36,11 @@ describe("Liquid Staking", function () {
     let bridgeRelayer;
     let activityModule;
     let stakingManager;
+    let externalStakingDistributor;
+    let multisigGuard;
     let stakingTokenImplementation;
+    let externalStakingTokenImplementationV1;
+    let externalStakingTokenImplementationV2;
     let stakingTokenInstance;
     let gnosisDepositProcessorL1;
     let gnosisStakingProcessorL2;
@@ -51,6 +59,7 @@ describe("Liquid Staking", function () {
     const livenessPeriod = oneDay; // 24 hours
     const initSupply = "5" + "0".repeat(26);
     const livenessRatio = "1"; // minimal possible value
+    const externalLivenessRatio = "1" + "0".repeat(12);
     const maxNumServices = 100;
     const minStakingDeposit = regDeposit;
     const fullStakeDeposit = regDeposit.mul(2);
@@ -157,6 +166,15 @@ describe("Liquid Staking", function () {
         const GnosisSafeSameAddressMultisig = await ethers.getContractFactory("GnosisSafeSameAddressMultisig");
         gnosisSafeSameAddressMultisig = await GnosisSafeSameAddressMultisig.deploy(bytecodeHash);
         await gnosisSafeSameAddressMultisig.deployed();
+
+        const RecoveryModule = await ethers.getContractFactory("RecoveryModule");
+        recoveryModule = await RecoveryModule.deploy(multiSend.address, serviceRegistry.address);
+        await recoveryModule.deployed();
+
+        const SafeMultisigWithRecoveryModule = await ethers.getContractFactory("SafeMultisigWithRecoveryModule");
+        safeMultisigWithRecoveryModule = await SafeMultisigWithRecoveryModule.deploy(gnosisSafe.address,
+            gnosisSafeProxyFactory.address, recoveryModule.address);
+        await safeMultisigWithRecoveryModule.deployed();
 
         const ERC20Token = await ethers.getContractFactory("ERC20Token");
         olas = await ERC20Token.deploy();
@@ -283,6 +301,33 @@ describe("Liquid Staking", function () {
         // Fund staking manager with native to support staking creation
         await deployer.sendTransaction({to: stakingManager.address, value: ethers.utils.parseEther("1")});
 
+        const ExternalStakingDistributor = await ethers.getContractFactory("ExternalStakingDistributor");
+        externalStakingDistributor = await ExternalStakingDistributor.deploy(olas.address, serviceManager.address,
+            safeMultisigWithRecoveryModule.address, gnosisSafeSameAddressMultisig.address, fallbackHandler.address,
+            multiSend.address, collector.address);
+        await externalStakingDistributor.deployed();
+
+        // Initialize externalStakingDistributor
+        const ExternalStakingDistributorProxy = await ethers.getContractFactory("Proxy");
+        initPayload = externalStakingDistributor.interface.encodeFunctionData("initialize", []);
+        const externalStakingDistributorProxy = await ExternalStakingDistributorProxy.deploy(externalStakingDistributor.address, initPayload);
+        await externalStakingDistributorProxy.deployed();
+        externalStakingDistributor = await ethers.getContractAt("ExternalStakingDistributor", externalStakingDistributorProxy.address);
+
+        // Fund external staking distributor with native to support staking creation
+        await deployer.sendTransaction({to: externalStakingDistributor.address, value: ethers.utils.parseEther("1")});
+
+        const MultisigGuard = await ethers.getContractFactory("MultisigGuard");
+        multisigGuard = await MultisigGuard.deploy(serviceRegistryTokenUtility.address, externalStakingDistributor.address);
+        await multisigGuard.deployed();
+
+        // Initialize multisigGuard
+        const MultisigGuardProxy = await ethers.getContractFactory("Proxy");
+        initPayload = multisigGuard.interface.encodeFunctionData("initialize", []);
+        const multisigGuardProxy = await ExternalStakingDistributorProxy.deploy(multisigGuard.address, initPayload);
+        await multisigGuardProxy.deployed();
+        multisigGuard = await ethers.getContractAt("MultisigGuard", multisigGuardProxy.address);
+
         const BridgeRelayer = await ethers.getContractFactory("BridgeRelayer");
         bridgeRelayer = await BridgeRelayer.deploy(olas.address);
         await bridgeRelayer.deployed();
@@ -293,7 +338,7 @@ describe("Liquid Staking", function () {
         await gnosisDepositProcessorL1.deployed();
 
         const GnosisStakingProcessorL2 = await ethers.getContractFactory("GnosisStakingProcessorL2");
-        gnosisStakingProcessorL2 = await GnosisStakingProcessorL2.deploy(olas.address, stakingManager.address,
+        gnosisStakingProcessorL2 = await GnosisStakingProcessorL2.deploy(olas.address, stakingManager.address, externalStakingDistributor.address,
             collector.address, bridgeRelayer.address, bridgeRelayer.address, gnosisDepositProcessorL1.address, chainId);
         await gnosisStakingProcessorL2.deployed();
 
@@ -305,6 +350,12 @@ describe("Liquid Staking", function () {
 
         // changeStakingProcessorL2 for stakingManager
         await stakingManager.changeStakingProcessorL2(gnosisStakingProcessorL2.address);
+
+        // changeStakingProcessorL2 for externalStakingDistributor
+        await externalStakingDistributor.changeStakingProcessorL2(gnosisStakingProcessorL2.address);
+
+        // changeMultisigGuard for externalStakingDistributor
+        await externalStakingDistributor.changeMultisigGuard(multisigGuard.address);
 
         // Set the gnosisStakingProcessorL2 address in gnosisDepositProcessorL1
         await gnosisDepositProcessorL1.setL2StakingProcessor(gnosisStakingProcessorL2.address);
@@ -331,6 +382,22 @@ describe("Liquid Staking", function () {
         const stakingTokenAddress = "0x" + res.logs[0].topics[2].slice(26);
         stakingTokenInstance = await ethers.getContractAt("StakingTokenLocked", stakingTokenAddress);
 
+        const ExternalActivityChecker = await ethers.getContractFactory("StakingActivityChecker");
+        externalActivityChecker = await ExternalActivityChecker.deploy(externalLivenessRatio);
+        await externalActivityChecker.deployed();
+
+        const StakingTokenV1 = await ethers.getContractFactory("StakingTokenV1");
+        externalStakingTokenImplementationV1 = await StakingTokenV1.deploy();
+        await externalStakingTokenImplementationV1.deployed();
+
+        const StakingTokenV2 = await ethers.getContractFactory("StakingToken");
+        externalStakingTokenImplementationV2 = await StakingTokenV2.deploy();
+        await externalStakingTokenImplementationV2.deployed();
+
+        // Whitelist external staking implementation
+        await stakingVerifier.setImplementationsStatuses([externalStakingTokenImplementationV1.address,
+            externalStakingTokenImplementationV2.address], [true, true], true);
+
         // Set service manager
         await serviceRegistry.changeManager(serviceManager.address);
         await serviceRegistryTokenUtility.changeManager(serviceManager.address);
@@ -338,8 +405,9 @@ describe("Liquid Staking", function () {
         // Whitelist gnosis multisig implementations
         await serviceRegistry.changeMultisigPermission(gnosisSafeMultisig.address, true);
         await serviceRegistry.changeMultisigPermission(gnosisSafeSameAddressMultisig.address, true);
+        await serviceRegistry.changeMultisigPermission(recoveryModule.address, true);
 
-        // Fund the staking contract
+        // Fund staking contract
         await olas.approve(stakingTokenAddress, stakingSupply);
         await stakingTokenInstance.deposit(stakingSupply);
 
@@ -437,8 +505,8 @@ describe("Liquid Staking", function () {
             // Request withdraw
             console.log("User requests withdraw of small amount of stOLAS:", stAmount.toString());
             previewAmount = await st.previewRedeem(stAmount);
-            let tx = await treasury.requestToWithdraw(stAmount, [gnosisChainId], [stakingTokenInstance.address],
-                [bridgePayload], [0]);
+            let tx = await treasury.requestToWithdraw(stAmount, [[], [gnosisChainId]], [], [stakingTokenInstance.address],
+                [[], [bridgePayload]], [[], [0]]);
             let res = await tx.wait();
             // Get withdraw request Id
             //console.log(res.logs);
@@ -466,8 +534,8 @@ describe("Liquid Staking", function () {
             stBalance = await st.balanceOf(deployer.address);
             console.log("User requests withdraw of all remaining stOLAS:", stBalance.toString());
             previewAmount = await st.previewRedeem(stBalance);
-            tx = await treasury.requestToWithdraw(stBalance, [gnosisChainId], [stakingTokenInstance.address],
-                [bridgePayload], [0]);
+            tx = await treasury.requestToWithdraw(stBalance, [[], [gnosisChainId]], [], [stakingTokenInstance.address],
+                [[], [bridgePayload]], [[], [0]]);
             res = await tx.wait();
             // Get withdraw request Id
             //console.log(res.logs);
@@ -598,8 +666,8 @@ describe("Liquid Staking", function () {
             // Request withdraw
             console.log("User requests withdraw of half of stOLAS:", stAmount.toString());
             previewAmount = await st.previewRedeem(stAmount);
-            let tx = await treasury.requestToWithdraw(stAmount, [gnosisChainId], [stakingTokenInstance.address],
-                [bridgePayload], [0]);
+            let tx = await treasury.requestToWithdraw(stAmount, [[], [gnosisChainId]], [], [stakingTokenInstance.address],
+                [[], [bridgePayload]], [[], [0]]);
             let res = await tx.wait();
             // Get withdraw request Id
             //console.log(res.logs);
@@ -627,8 +695,8 @@ describe("Liquid Staking", function () {
             stBalance = await st.balanceOf(deployer.address);
             console.log("User requests withdraw of all remaining stOLAS:", stBalance.toString());
             previewAmount = await st.previewRedeem(stBalance);
-            tx = await treasury.requestToWithdraw(stBalance, [gnosisChainId], [stakingTokenInstance.address],
-                [bridgePayload], [0]);
+            tx = await treasury.requestToWithdraw(stBalance, [[], [gnosisChainId]], [], [stakingTokenInstance.address],
+                [[], [bridgePayload]], [[], [0]]);
             res = await tx.wait();
             // Get withdraw request Id
             //console.log(res.logs);
@@ -752,8 +820,8 @@ describe("Liquid Staking", function () {
             // Request withdraw
             console.log("User requests withdraw of half of stOLAS:", stAmount.toString());
             previewAmount = await st.previewRedeem(stAmount);
-            let tx = await treasury.requestToWithdraw(stAmount, [gnosisChainId], [stakingTokenInstance.address],
-                [bridgePayload], [0]);
+            let tx = await treasury.requestToWithdraw(stAmount, [[], [gnosisChainId]], [], [stakingTokenInstance.address],
+                [[], [bridgePayload]], [[], [0]]);
             let res = await tx.wait();
             // Get withdraw request Id
             //console.log(res.logs);
@@ -881,7 +949,7 @@ describe("Liquid Staking", function () {
             let bridgePayloads = new Array(numUnstakes).fill(bridgePayload);
             let values = new Array(numUnstakes).fill(0);
             previewAmount = await st.previewRedeem(stBalance);
-            tx = await treasury.requestToWithdraw(stBalance, chainIds, stakingInstances,bridgePayloads, values);
+            tx = await treasury.requestToWithdraw(stBalance, [[], chainIds], [], stakingInstances, [[], bridgePayloads], [[], values]);
             res = await tx.wait();
             // Get withdraw request Id
             //console.log(res.logs);
@@ -1034,7 +1102,7 @@ describe("Liquid Staking", function () {
                 console.log("Iteration:", i);
                 const previewAmount = await st.previewRedeem(stAmount);
                 console.log("previewAmount:", previewAmount.toString());
-                let tx = await treasury.requestToWithdraw(stAmount, chainIds, stakingInstances, bridgePayloads, values);
+                let tx = await treasury.requestToWithdraw(stAmount, [[], chainIds], [], stakingInstances, [[], bridgePayloads], [[], values]);
                 let res = await tx.wait();
                 // Get withdraw request Id
                 //console.log(res.logs);
@@ -1246,7 +1314,7 @@ describe("Liquid Staking", function () {
                 // Request withdraw
                 console.log("User requests withdraw of half of stOLAS:", stAmount.toString());
                 previewAmount = await st.previewRedeem(stAmount);
-                let tx = await treasury.requestToWithdraw(stAmount, chainIds, stakingInstances, bridgePayloads, values);
+                let tx = await treasury.requestToWithdraw(stAmount, [[], chainIds], [], stakingInstances, [[], bridgePayloads], [[], values]);
                 let res = await tx.wait();
                 // Get withdraw request Id
                 //console.log(res.logs);
@@ -1316,7 +1384,7 @@ describe("Liquid Staking", function () {
                 // Request withdraw
                 console.log("User requests partial withdraw of stOLAS:", stAmount.toString());
                 const previewAmount = await st.previewRedeem(stAmount);
-                let tx = await treasury.requestToWithdraw(stAmount, chainIds, stakingInstances, bridgePayloads, values);
+                let tx = await treasury.requestToWithdraw(stAmount, [[], chainIds], [], stakingInstances, [[], bridgePayloads], [[], values]);
                 let res = await tx.wait();
                 // Get withdraw request Id
                 //console.log(res.logs);
@@ -1624,6 +1692,291 @@ describe("Liquid Staking", function () {
             // Check that the only amount is in reserve
             const totalAssets = await st.totalAssets();
             expect(totalAssets).to.equal(reserveBalance);
+
+            // Restore a previous state of blockchain
+            snapshot.restore();
+        });
+
+        it("External staking", async function () {
+            // Max timeout 1600 sec for coverage
+            this.timeout(1600000);
+
+            // Take a snapshot of the current state of the blockchain
+            const snapshot = await helpers.takeSnapshot();
+
+            console.log("L1");
+
+            // Get OLAS amount to stake
+            const olasAmount = minStakingDeposit.mul(8);
+            console.log("User deposits OLAS amount:", olasAmount.toString());
+
+            // Approve OLAS for depository
+            await olas.approve(depository.address, initSupply);
+
+            // Deposit OLAS on L1
+            console.log("User deposits OLAS for stOLAS");
+            await depository.deposit(olasAmount, [], [], [], []);
+            let stBalance = await st.balanceOf(deployer.address);
+            console.log("User stOLAS balance now:", stBalance.toString());
+
+            let stakedBalance = await st.stakedBalance();
+            let vaultBalance = await st.vaultBalance();
+            let reserveBalance = await st.reserveBalance();
+
+            // Check that the only amount is in reserve
+            const totalAssets = await st.totalAssets();
+            expect(totalAssets).to.equal(reserveBalance);
+
+            // Whitelist externalStakingDistributor
+            await depository.setExternalStakingDistributorChainIds([gnosisChainId], [externalStakingDistributor.address]);
+
+            // Deposit funds for external staking
+            await depository.depositExternal([gnosisChainId], [olasAmount], [bridgePayload], [0]);
+
+            // Check OLAS balance
+            let externalBalance = await olas.balanceOf(externalStakingDistributor.address);
+            expect(externalBalance).to.equal(olasAmount);
+
+            // Create external staking contract
+            let externalServiceParams = {
+                metadataHash: defaultHash,
+                maxNumServices: 3,
+                rewardsPerSecond: "5" + "0".repeat(14),
+                minStakingDeposit: regDeposit,
+                minNumStakingPeriods: 3,
+                maxNumInactivityPeriods: 3,
+                livenessPeriod: 10, // Ten seconds
+                timeForEmissions: 100,
+                numAgentInstances: 1,
+                agentIds,
+                threshold: 0,
+                configHash: HashZero,
+                proxyHash: bytecodeHash,
+                serviceRegistry: serviceRegistry.address,
+                activityChecker: externalActivityChecker.address
+            };
+            const maxInactivity = externalServiceParams.maxNumInactivityPeriods * livenessPeriod + 1;
+
+            // Deploy staking proxy V1
+            let initPayload = externalStakingTokenImplementationV1.interface.encodeFunctionData("initialize",
+                [externalServiceParams, serviceRegistryTokenUtility.address, olas.address]);
+            let tx = await stakingFactory.createStakingInstance(externalStakingTokenImplementationV1.address, initPayload);
+            let res = await tx.wait();
+            // Get staking contract instance address from the event
+            const externalStakingTokenAddressV1 = "0x" + res.logs[0].topics[2].slice(26);
+            const externalStakingTokenInstanceV1 = await ethers.getContractAt("StakingToken", externalStakingTokenAddressV1);
+
+            // Deploy staking proxy V2
+            initPayload = externalStakingTokenImplementationV2.interface.encodeFunctionData("initialize",
+                [externalServiceParams, serviceRegistryTokenUtility.address, olas.address]);
+            tx = await stakingFactory.createStakingInstance(externalStakingTokenImplementationV2.address, initPayload);
+            res = await tx.wait();
+            // Get staking contract instance address from the event
+            const externalStakingTokenAddressV2 = "0x" + res.logs[0].topics[2].slice(26);
+            const externalStakingTokenInstanceV2 = await ethers.getContractAt("StakingToken", externalStakingTokenAddressV2);
+
+            // Create staking proxy config: 80% of rewards - to stOLAS, 17.5% - to protocol, 2.5% - to curating agent
+            // Staking type - STAKING_TYPE_OLAS_V1
+            const stakingConfigValueV1 = await externalStakingDistributor.wrapStakingConfig(AddressZero, 8000, 1750, 250, 0);
+            // Staking type - STAKING_TYPE_OLAS_V2
+            const stakingConfigValueV2 = await externalStakingDistributor.wrapStakingConfig(AddressZero, 8000, 1750, 250, 1);
+
+            // Whitelist staking proxies
+            await externalStakingDistributor.setStakingProxyConfigs([externalStakingTokenAddressV1,
+                externalStakingTokenAddressV2], [stakingConfigValueV1, stakingConfigValueV2]);
+
+            // Fund staking contracts
+            await olas.approve(externalStakingTokenAddressV1, stakingSupply);
+            await externalStakingTokenInstanceV1.deposit(stakingSupply);
+            await olas.approve(externalStakingTokenAddressV2, stakingSupply);
+            await externalStakingTokenInstanceV2.deposit(stakingSupply);
+
+            // Check external balance before stake
+            externalBalance = await olas.balanceOf(externalStakingDistributor.address);
+            console.log("externalStakingDistributor balance before first stake:", externalBalance);
+            expect(externalBalance).to.equal(olasAmount);
+
+            // Stake services - create new ones with serviceId == 0
+            let agentInstanceAddressV1 = signers[1].address;
+            // agentId == 0 and will be fetched from stakingProxy
+            await externalStakingDistributor.stake(externalStakingTokenAddressV1, 0, 0, defaultHash, agentInstanceAddressV1);
+            let agentInstanceAddressV2 = signers[2].address;
+            await externalStakingDistributor.stake(externalStakingTokenAddressV2, 0, agentId, defaultHash, agentInstanceAddressV2);
+
+            // Check external balance after first stake
+            externalBalance = await olas.balanceOf(externalStakingDistributor.address);
+            console.log("externalStakingDistributor balance after first stake:", externalBalance);
+            expect(externalBalance).to.equal(olasAmount.div(2));
+
+            // Get service multisig for staking V1
+            let service = await serviceRegistry.getService(serviceId);
+            let multisigV1 = await ethers.getContractAt("GnosisSafe", service.multisig);
+
+            // Make transactions by service multisig
+            let nonce = await multisigV1.nonce();
+            let txHashData = await safeContracts.buildContractCall(multisigV1, "getThreshold", [], nonce, 0, 0);
+            let signMessageData = await safeContracts.safeSignMessage(signers[1], multisigV1, txHashData, 0);
+            await safeContracts.executeTx(multisigV1, txHashData, [signMessageData], 0);
+
+            // Get service multisig for staking V2
+            service = await serviceRegistry.getService(serviceId + 1);
+            let multisigV2 = await ethers.getContractAt("GnosisSafe", service.multisig);
+
+            // Make transactions by the service multisig
+            nonce = await multisigV2.nonce();
+            txHashData = await safeContracts.buildContractCall(multisigV2, "getThreshold", [], nonce, 0, 0);
+            signMessageData = await safeContracts.safeSignMessage(signers[2], multisigV2, txHashData, 0);
+            await safeContracts.executeTx(multisigV2, txHashData, [signMessageData], 0);
+
+            // Try to kill guard
+            nonce = await multisigV1.nonce();
+            txHashData = await safeContracts.buildContractCall(multisigV1, "setGuard", [AddressZero], nonce, 0, 0);
+            signMessageData = await safeContracts.safeSignMessage(signers[1], multisigV1, txHashData, 0);
+            await expect(
+                safeContracts.executeTx(multisigV1, txHashData, [signMessageData], 0)
+            ).to.be.reverted;
+
+            // Try to disable module
+            const sentinelModules = "0x0000000000000000000000000000000000000001";
+            nonce = await multisigV1.nonce();
+            txHashData = await safeContracts.buildContractCall(multisigV1, "disableModule", [sentinelModules,
+                recoveryModule.address], nonce, 0, 0);
+            signMessageData = await safeContracts.safeSignMessage(signers[1], multisigV1, txHashData, 0);
+            await expect(
+                safeContracts.executeTx(multisigV1, txHashData, [signMessageData], 0)
+            ).to.be.reverted;
+
+            // Try to unstake before required staking time is passed
+            await expect(
+                externalStakingDistributor.unstakeAndWithdraw(externalStakingTokenAddressV1, serviceId, unstakeOperation)
+            ).to.be.reverted;
+
+            // Increase the time for the liveness period
+            await helpers.time.increase(maxInactivity);
+
+            // Checkpoint
+            await externalStakingTokenInstanceV1.checkpoint();
+            await externalStakingTokenInstanceV2.checkpoint();
+
+            // Check UNSTAKE requested
+            let unstakeRequestedExternal = await externalStakingDistributor.mapUnstakeOperationRequestedAmounts(unstakeOperation);
+            //console.log("Unstake requested external before first claim:", unstakeRequestedExternal);
+            expect(unstakeRequestedExternal).to.equal(0);
+
+            // Claim and distribute rewards
+            await externalStakingDistributor.claim([externalStakingTokenAddressV1], [serviceId]);
+            //await externalStakingDistributor.claim([externalStakingTokenAddressV2], [serviceId + 1]);
+            //await externalStakingDistributor.claim([externalStakingTokenAddressV1, externalStakingTokenAddressV2],
+            //    [serviceId, serviceId + 1]);
+
+            // Check UNSTAKE requested
+            unstakeRequestedExternal = await externalStakingDistributor.mapUnstakeOperationRequestedAmounts(unstakeOperation);
+            //console.log("Unstake requested external after first claim:", unstakeRequestedExternal);
+            expect(unstakeRequestedExternal).to.equal(0);
+
+            // Check external balance after claim
+            externalBalance = await olas.balanceOf(externalStakingDistributor.address);
+            console.log("externalStakingDistributor balance after first claim:", externalBalance);
+            expect(externalBalance).to.equal(olasAmount.div(2));
+
+            // Check Collector balance
+            let collectorBalance = await olas.balanceOf(collector.address);
+            console.log("Collector balance:", collectorBalance);
+            expect(collectorBalance).to.not.eq(0);
+
+            // Relay rewards to L1
+            console.log("Calling relay rewards tokens to L1 by agent or manually");
+            await collector.relayTokens(rewardOperation, bridgePayload);
+
+            console.log("\nL1");
+            let distributorBalance = await olas.balanceOf(distributor.address);
+            console.log("Distributor balance now:", distributorBalance.toString());
+            // Distribute OLAS to veOLAS and stOLAS
+            console.log("Calling distribute obtained L2 to L1 OLAS to veOLAS and stOLAS by agent or manually");
+            await distributor.distribute();
+
+            console.log("stakedBalance after distribute:", await st.stakedBalance());
+            console.log("vaultBalance after distribute:", await st.vaultBalance());
+            console.log("reserveBalance after distribute:", await st.reserveBalance());
+
+            // Unstake services
+            await externalStakingDistributor.unstakeAndWithdraw(externalStakingTokenAddressV1, serviceId, unstakeOperation);
+            await externalStakingDistributor.unstakeAndWithdraw(externalStakingTokenAddressV2, serviceId + 1, unstakeOperation);
+
+            // Check external balance after first unstake - must be equal to full olas amount
+            externalBalance = await olas.balanceOf(externalStakingDistributor.address);
+            console.log("externalStakingDistributor balance after first unstake:", externalBalance);
+            expect(externalBalance).to.equal(olasAmount);
+
+            // Re-stake same services that were unstaked
+            agentInstanceAddressV1 = signers[3].address;
+            await externalStakingDistributor.stake(externalStakingTokenAddressV1, serviceId, agentId, defaultHash, agentInstanceAddressV1);
+            agentInstanceAddressV2 = signers[4].address;
+            await externalStakingDistributor.stake(externalStakingTokenAddressV2, serviceId + 1, agentId, defaultHash, agentInstanceAddressV2);
+
+            // Make transactions by service multisigs
+            nonce = await multisigV1.nonce();
+            txHashData = await safeContracts.buildContractCall(multisigV1, "getThreshold", [], nonce, 0, 0);
+            signMessageData = await safeContracts.safeSignMessage(signers[3], multisigV1, txHashData, 0);
+            await safeContracts.executeTx(multisigV1, txHashData, [signMessageData], 0);
+
+            nonce = await multisigV2.nonce();
+            txHashData = await safeContracts.buildContractCall(multisigV2, "getThreshold", [], nonce, 0, 0);
+            signMessageData = await safeContracts.safeSignMessage(signers[4], multisigV2, txHashData, 0);
+            await safeContracts.executeTx(multisigV2, txHashData, [signMessageData], 0);
+
+            // Increase the time for the liveness period
+            await helpers.time.increase(maxInactivity);
+
+            // Checkpoint
+            await externalStakingTokenInstanceV1.checkpoint();
+            await externalStakingTokenInstanceV2.checkpoint();
+
+            // Claim and distribute rewards
+            await externalStakingDistributor.claim([externalStakingTokenAddressV1, externalStakingTokenAddressV2],
+                [serviceId, serviceId + 1]);
+
+            // Request to withdraw
+            await treasury.requestToWithdraw(olasAmount, [[gnosisChainId], []], [olasAmount], [],
+                [[bridgePayload], []], [[0], []]);
+
+            // Check UNSTAKE requested: it is now half of olasAmount because the unused unstaked funds were released right away
+            unstakeRequestedExternal = await externalStakingDistributor.mapUnstakeOperationRequestedAmounts(unstakeOperation);
+            //console.log("Unstake requested external after withdraw request:", unstakeRequestedExternal);
+            expect(unstakeRequestedExternal).to.equal(olasAmount.div(2));
+
+            // At this point of time external staking distributor has no funds - as those requested for unstake are still staked
+            externalBalance = await olas.balanceOf(externalStakingDistributor.address);
+            expect(externalBalance).to.equal(0);
+
+            // Unstake services
+            await externalStakingDistributor.unstakeAndWithdraw(externalStakingTokenAddressV1, serviceId, unstakeOperation);
+            await externalStakingDistributor.unstakeAndWithdraw(externalStakingTokenAddressV2, serviceId + 1, unstakeOperation);
+
+            // At this point of time external staking distributor should not have funds
+            externalBalance = await olas.balanceOf(externalStakingDistributor.address);
+            expect(externalBalance).to.equal(0);
+
+            // Relay rewards and unstake request to L1
+            console.log("Calling relay rewards tokens to L1 by agent or manually");
+            await collector.relayTokens(rewardOperation, bridgePayload);
+            await collector.relayTokens(unstakeOperation, bridgePayload);
+
+            console.log("\nL1");
+            distributorBalance = await olas.balanceOf(distributor.address);
+            console.log("Distributor balance now:", distributorBalance.toString());
+            // Distribute OLAS to veOLAS and stOLAS
+            console.log("Calling distribute obtained L2 to L1 OLAS to veOLAS and stOLAS by agent or manually");
+            await distributor.distribute();
+
+            console.log("stakedBalance after distribute:", await st.stakedBalance());
+            console.log("vaultBalance after distribute:", await st.vaultBalance());
+            console.log("reserveBalance after distribute:", await st.reserveBalance());
+
+            // Check Treasury balance: it must be bigger than olasAmount
+            // olasAmount in stOLAS with rewards is > than OLAS olasAmount
+            let treasuryBalance = await olas.balanceOf(treasury.address);
+            expect(treasuryBalance).to.gt(olasAmount);
 
             // Restore a previous state of blockchain
             snapshot.restore();

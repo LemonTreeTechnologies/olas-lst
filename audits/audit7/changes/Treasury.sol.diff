@@ -1,0 +1,91 @@
+diff --git a/contracts/l1/Treasury.sol b/contracts/l1/Treasury.sol
+index 08ad656..dbe1540 100644
+--- a/contracts/l1/Treasury.sol
++++ b/contracts/l1/Treasury.sol
+@@ -22,6 +22,24 @@ interface IDepository {
+         uint256[] memory values,
+         address sender
+     ) external payable returns (uint256[] memory amounts);
++
++    /// @dev Initiates cross-chain unstake request on external staking distributors by Treasury or owner.
++    /// @notice 1. By Treasury: deducts reserves from their staked part and get them back as vault assets.
++    ///         2. By owner: deducts reserves from their staked part and get them back as assets reserved for staking.
++    /// @notice It is solely caller responsibility not to run out of gas when calling this function.
++    ///         Subject to gas estimation as the number of array elements is proportional to gas usage increase.
++    /// @param chainIds Set of chain Ids with external staking distributors.
++    /// @param amounts Set of unstake amounts requested from external staking on each corresponding chain Id.
++    /// @param bridgePayloads Bridge payloads corresponding to each chain Id.
++    /// @param values Value amounts for each bridge interaction, if applicable.
++    /// @param sender Sender account.
++    function unstakeExternal(
++        uint256[] memory chainIds,
++        uint256[] memory amounts,
++        bytes[] memory bridgePayloads,
++        uint256[] memory values,
++        address sender
++    ) external payable;
+ }
+ 
+ interface IST {
+@@ -122,18 +140,20 @@ contract Treasury is Implementation, ERC6909 {
+     /// @notice Vault reserves are used first. If there is a lack of OLAS reserves, the backup amount is requested
+     ///         to be unstaked from other models.
+     /// @param stAmount Provided stAmount to burn in favor of OLAS tokens.
+-    /// @param chainIds Set of chain Ids with staking proxies.
+-    /// @param stakingProxies Set of staking proxies corresponding to each chain Id.
+-    /// @param bridgePayloads Bridge payloads corresponding to each chain Id.
+-    /// @param values Value amounts for each bridge interaction, if applicable.
++    /// @param chainIds 2D set of chain Ids with [staked externals] and [LST staking proxies].
++    /// @param externalAmounts Set of corresponding amounts for staked externals.
++    /// @param stakingProxies Set of staking proxies corresponding to each chain Id in [LST staking proxies] set.
++    /// @param bridgePayloads 2D set of bridge payloads corresponding to each chain Id.
++    /// @param values 2D set of value amounts for each bridge interaction, if applicable.
+     /// @return requestId Withdraw request ERC-1155 token.
+     /// @return olasAmount Calculated OLAS amount.
+     function requestToWithdraw(
+         uint256 stAmount,
+-        uint256[] memory chainIds,
++        uint256[][] memory chainIds,
++        uint256[] memory externalAmounts,
+         address[] memory stakingProxies,
+-        bytes[] memory bridgePayloads,
+-        uint256[] memory values
++        bytes[][] memory bridgePayloads,
++        uint256[][] memory values
+     ) external payable returns (uint256 requestId, uint256 olasAmount) {
+         // Reentrancy guard
+         if (_locked) {
+@@ -178,7 +198,32 @@ contract Treasury is Implementation, ERC6909 {
+         if (stakedBalanceBefore > stakedBalanceAfter) {
+             uint256 withdrawDiff = stakedBalanceBefore - stakedBalanceAfter;
+ 
+-            IDepository(depository).unstake(withdrawDiff, chainIds, stakingProxies, bridgePayloads, values, msg.sender);
++            // Check if unstake from externals is requested
++            if (chainIds[0].length > 0) {
++                uint256 totalExternalAmount;
++                // Traverse external amounts, if any
++                for (uint256 i = 0; i < externalAmounts.length; ++i) {
++                    totalExternalAmount += externalAmounts[i];
++                }
++
++                // Check for overflow
++                if (totalExternalAmount > withdrawDiff) {
++                    revert Overflow(totalExternalAmount, withdrawDiff);
++                }
++
++                // Update withdraw amount
++                if (totalExternalAmount > 0) {
++                    withdrawDiff -= totalExternalAmount;
++                }
++
++                // First, unstake from external proxies
++                IDepository(depository)
++                    .unstakeExternal(chainIds[0], externalAmounts, bridgePayloads[0], values[0], msg.sender);
++            }
++
++            // Second, unstake from LST staking proxies, if still required
++            IDepository(depository)
++                .unstake(withdrawDiff, chainIds[1], stakingProxies, bridgePayloads[1], values[1], msg.sender);
+         }
+ 
+         emit WithdrawRequestInitiated(msg.sender, requestId, stAmount, olasAmount, withdrawTime);

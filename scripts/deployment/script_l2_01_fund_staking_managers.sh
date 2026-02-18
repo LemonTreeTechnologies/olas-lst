@@ -25,6 +25,7 @@ chainId=$(jq -r '.chainId' $globals)
 networkURL=$(jq -r '.networkURL' $globals)
 
 stakingManagerProxyAddress=$(jq -r ".stakingManagerProxyAddress" $globals)
+externalStakingDistributorProxyAddress=$(jq -r ".externalStakingDistributorProxyAddress" $globals)
 
 # Check for Polygon keys only since on other networks those are not needed
 if [ $chainId == 137 ]; then
@@ -55,6 +56,13 @@ castSendHeader="cast send --rpc-url $networkURL$API_KEY $walletArgs"
 
 echo "${green}Fund StakingManagerProxy${reset}"
 castArgs="$stakingManagerProxyAddress --value 1gwei"
+echo $castArgs
+castCmd="$castSendHeader $castArgs"
+result=$($castCmd)
+echo "$result" | grep "status"
+
+echo "${green}Fund ExternalStakingDistributorProxy${reset}"
+castArgs="$externalStakingDistributorProxyAddress --value 1gwei"
 echo $castArgs
 castCmd="$castSendHeader $castArgs"
 result=$($castCmd)

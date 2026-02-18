@@ -1,0 +1,44 @@
+diff --git a/contracts/l2/Collector.sol b/contracts/l2/Collector.sol
+index aeb9747..3e6c707 100644
+--- a/contracts/l2/Collector.sol
++++ b/contracts/l2/Collector.sol
+@@ -21,11 +21,6 @@ interface IToken {
+     /// @param amount Amount to transfer to.
+     /// @return True if the function execution is successful.
+     function transferFrom(address from, address to, uint256 amount) external returns (bool);
+-
+-    /// @dev Gets the amount of tokens owned by a specified account.
+-    /// @param account Account address.
+-    /// @return Amount of tokens owned.
+-    function balanceOf(address account) external view returns (uint256);
+ }
+ 
+ /// @dev Zero value.
+@@ -185,6 +180,27 @@ contract Collector is Implementation {
+         emit OperationReceiversSet(operations, receivers);
+     }
+ 
++    /// @dev Tops up address(this) with a specified amount for protocol assets.
++    /// @param amount OLAS amount.
++    function topUpProtocol(uint256 amount) external {
++        // Reentrancy guard
++        if (_locked == 2) {
++            revert ReentrancyGuard();
++        }
++        _locked = 2;
++
++        // Pull OLAS amount
++        IToken(olas).transferFrom(msg.sender, address(this), amount);
++
++        // Update protocol balance
++        uint256 curProtocolBalance = protocolBalance + amount;
++        protocolBalance = curProtocolBalance;
++
++        emit ProtocolBalanceUpdated(curProtocolBalance);
++
++        _locked = 1;
++    }
++
+     /// @dev Tops up address(this) with a specified amount according to a selected operation.
+     /// @param amount OLAS amount.
+     /// @param operation Operation type.

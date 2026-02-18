@@ -26,6 +26,7 @@ while maintaining exposure to staking rewards.
 
 ### L2 Layer (i.e. Base, etc)
 - **StakingManager**: Orchestrates service deployment and staking operations
+- **ExternalStakingDistributor**: Performs service deployment and staking for external staking contracts
 - **StakingTokenLocked**: Manages individual staking instances and reward distribution
 - **ActivityModule**: Handles service activity verification and reward claiming
 - **Collector**: Collects and bridges rewards back to L1
@@ -48,6 +49,7 @@ contracts/
 │   └── UnstakeRelayer.sol # Unstake request handling
 ├── l2/                    # L2 (Gnosis Chain) contracts
 │   ├── StakingManager.sol    # Staking orchestration
+│   ├── ExternalStakingDistributor # External staking orchestration
 │   ├── StakingTokenLocked.sol # Individual staking instances
 │   ├── ActivityModule.sol     # Service activity management
 │   └── Collector.sol          # Reward collection and bridging
@@ -78,7 +80,8 @@ doc/                       # Documentation and whitepaper
 1. Services are deployed on L2 with OLAS backing
 2. Rewards accumulate based on service performance
 3. ActivityModule verifies service liveness and required KPI performance
-4. Collector gathers rewards and bridges them back to L1 via a Distributor contract
+4. ExternalStakingDistributor curates all external staking and forces unstakes, if required
+5. Collector gathers rewards and bridges them back to L1 via a Distributor contract
 
 ### 3. Withdrawal Process
 1. User requests withdrawal through Treasury
