@@ -50,7 +50,7 @@
   "stakingProxyAddresses": [
     "0x22FA631064A99c43196ec5f8324b73211Ced98f9"
   ],
-  "externalStakingDistributorAddress": "0x45aE9211E9c3853229e3D865050BA9979296CD36",
+  "externalStakingDistributorAddress": "0x7eaF9ABbF109FE7C9B97348385Fc9CA7756fB04B",
   "externalStakingDistributorProxyAddress": "0x7E8C636FBD0D9085C112680d8C3fde701452dcb5",
   "multisigGuardAddress": "0xA26CfDC0e84A04444b6a468c1d1F7191D19541E6",
   "multisigGuardProxyAddress": "0xBD645cf2D4F04A1c12B97fe2a8b4A09EF50F1896",
