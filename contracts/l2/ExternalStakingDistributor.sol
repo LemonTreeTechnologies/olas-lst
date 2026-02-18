@@ -786,7 +786,7 @@ contract ExternalStakingDistributor is Implementation, ERC721TokenReceiver {
 
             // Check proxy configs
             (
-                address stakingGuard,
+                ,
                 uint256 collectorRewardFactor,
                 uint256 protocolRewardFactor,
                 uint256 curatingAgentRewardFactor,
@@ -841,6 +841,7 @@ contract ExternalStakingDistributor is Implementation, ERC721TokenReceiver {
 
     /// @dev Sets curating agents statuses.
     /// @notice This is required such that potential malicious agents do not stake for no reason.
+    /// @notice Contract owner sets stakingProxy config, however this function call is for staking guards only.
     /// @param stakingProxy Staking proxy address.
     /// @param curatingAgents Set of curating agents.
     /// @param statuses Corresponding set of statuses: true / false.
@@ -863,8 +864,8 @@ contract ExternalStakingDistributor is Implementation, ERC721TokenReceiver {
         // Get staking guard address
         (address stakingGuard,,,,) = unwrapStakingConfig(config);
 
-        // Check for access: staking guard or owner
-        if (msg.sender != stakingGuard && msg.sender != owner) {
+        // Check for access: only staking guard
+        if (msg.sender != stakingGuard) {
             revert UnauthorizedAccount(msg.sender);
         }
 
