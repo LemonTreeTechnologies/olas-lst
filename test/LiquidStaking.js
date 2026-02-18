@@ -1777,9 +1777,9 @@ describe("Liquid Staking", function () {
 
             // Create staking proxy config: 80% of rewards - to stOLAS, 17.5% - to protocol, 2.5% - to curating agent
             // Staking type - STAKING_TYPE_OLAS_V1
-            const stakingConfigValueV1 = await externalStakingDistributor.wrapStakingConfig(8000, 1750, 250, 0);
+            const stakingConfigValueV1 = await externalStakingDistributor.wrapStakingConfig(AddressZero, 8000, 1750, 250, 0);
             // Staking type - STAKING_TYPE_OLAS_V2
-            const stakingConfigValueV2 = await externalStakingDistributor.wrapStakingConfig(8000, 1750, 250, 1);
+            const stakingConfigValueV2 = await externalStakingDistributor.wrapStakingConfig(AddressZero, 8000, 1750, 250, 1);
 
             // Whitelist staking proxies
             await externalStakingDistributor.setStakingProxyConfigs([externalStakingTokenAddressV1,

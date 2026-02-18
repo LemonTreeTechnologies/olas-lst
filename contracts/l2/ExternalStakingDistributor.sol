@@ -179,7 +179,9 @@ contract ExternalStakingDistributor is Implementation, ERC721TokenReceiver {
     );
     event SetStakingProxyConfigs(address[] stakingProxies, uint256[] proxyTypes);
     event SetManagingAgentStatuses(address[] managingAgents, bool[] statuses);
-    event SetCuratingAgentStatuses(address[] managingAgents, bool[] statuses);
+    event SetCuratingAgentStatuses(
+        address indexed stakingGuard, address indexed stakingProxy, address[] managingAgents, bool[] statuses
+    );
     event Deposit(address indexed sender, bytes32 indexed operation, uint256 amount);
     event Withdraw(address indexed sender, bytes32 indexed operation, uint256 amount, uint256 unstakeRequestedAmount);
     event Claimed(address[] stakingProxies, uint256[] serviceIds, uint256[] rewards);
@@ -231,19 +233,22 @@ contract ExternalStakingDistributor is Implementation, ERC721TokenReceiver {
     uint256 internal _locked = 1;
 
     // Mapping of whitelisted staking proxy address => (staking reward distributions | staking type)
-    // Staking config: collectorRewardFactor 16 bits | protocolRewardFactor 16 bits
+    // Staking config: stakingGuard 160 bits | collectorRewardFactor 16 bits | protocolRewardFactor 16 bits
     //                 | curatingAgentRewardFactor 16 bits | stakingType 8 bits
     mapping(address => uint256) public mapStakingProxyConfigs;
     // Mapping of unstake requests: unstake operation => amount requested
     mapping(bytes32 => uint256) public mapUnstakeOperationRequestedAmounts;
     // Mapping of service Id => agent address curating it
     mapping(uint256 => address) public mapServiceIdCuratingAgents;
-    // Mapping whitelisted curating agent addresses
+    // UNUSED for now: Mapping whitelisted curating agent addresses
     mapping(address => bool) public mapCuratingAgents;
     // Mapping of whitelisted managing agent addresses
     mapping(address => bool) public mapManagingAgents;
     // Mapping of multisig address => service Id
     mapping(address => uint256) public mapMultisigServiceIds;
+
+    // Mapping of (staking guard + staking proxy) hash => whitelisted curating agent addresses
+    mapping(bytes32 => mapping(address => bool)) public mapStakingGuardHashCuratingAgents;
 
     /// @dev ExternalStakingDistributor constructor.
     /// @param _olas OLAS token address.
@@ -485,7 +490,7 @@ contract ExternalStakingDistributor is Implementation, ERC721TokenReceiver {
         uint256 config = mapStakingProxyConfigs[stakingProxy];
 
         // Unwrap config
-        (uint256 collectorAmount, uint256 protocolAmount,, StakingType stakingType) = unwrapStakingConfig(config);
+        (, uint256 collectorAmount, uint256 protocolAmount,, StakingType stakingType) = unwrapStakingConfig(config);
 
         // Calculate reward distribution
         collectorAmount = (reward * collectorAmount) / MAX_REWARD_FACTOR;
@@ -580,14 +585,34 @@ contract ExternalStakingDistributor is Implementation, ERC721TokenReceiver {
         }
         _locked = 2;
 
-        // Check for access: whitelisted curating agent or owner
-        if (!mapCuratingAgents[msg.sender] && msg.sender != owner) {
-            revert UnauthorizedAccount(msg.sender);
-        }
+        // Get proxy config value
+        uint256 config = mapStakingProxyConfigs[stakingProxy];
 
         // Check for whitelisted staking proxy type
-        if (mapStakingProxyConfigs[stakingProxy] == 0) {
+        if (config == 0) {
             revert ZeroValue();
+        }
+
+        // If staker is not owner - check for curating agent access
+        if (msg.sender != owner) {
+            // Curating agent access is true, if not set otherwise
+            bool curatingAgentAccess = true;
+
+            // Get staking guard address
+            (address stakingGuard,,,,) = unwrapStakingConfig(config);
+
+            // Check for msg.sender access
+            if (stakingGuard != address(0)) {
+                // Get staking hash
+                bytes32 stakingHash = keccak256(abi.encode(stakingGuard, stakingProxy));
+                // Check access
+                curatingAgentAccess = mapStakingGuardHashCuratingAgents[stakingHash][msg.sender];
+            }
+
+            // Check for access: whitelisted curating agent
+            if (!curatingAgentAccess) {
+                revert UnauthorizedAccount(msg.sender);
+            }
         }
 
         // Check for zero value
@@ -760,7 +785,7 @@ contract ExternalStakingDistributor is Implementation, ERC721TokenReceiver {
             }
 
             // Check proxy configs
-            (uint256 collectorRewardFactor, uint256 protocolRewardFactor, uint256 curatingAgentRewardFactor,) =
+            (, uint256 collectorRewardFactor, uint256 protocolRewardFactor, uint256 curatingAgentRewardFactor,) =
                 unwrapStakingConfig(configs[i]);
 
             // Check for collector and zero value
@@ -812,19 +837,32 @@ contract ExternalStakingDistributor is Implementation, ERC721TokenReceiver {
 
     /// @dev Sets curating agents statuses.
     /// @notice This is required such that potential malicious agents do not stake for no reason.
+    /// @notice Contract owner sets stakingProxy config, however this function call is for staking guards only.
+    /// @param stakingProxy Staking proxy address.
     /// @param curatingAgents Set of curating agents.
     /// @param statuses Corresponding set of statuses: true / false.
-    function setCuratingAgents(address[] memory curatingAgents, bool[] memory statuses) external {
-        // Check for the ownership
-        if (msg.sender != owner) {
-            revert OwnerOnly(msg.sender, owner);
-        }
-
+    function setCuratingAgents(address stakingProxy, address[] memory curatingAgents, bool[] memory statuses) external {
         // Get number of agents
         uint256 numAgents = curatingAgents.length;
         // Check for array length
         if (numAgents == 0 || numAgents != statuses.length) {
             revert WrongArrayLength();
+        }
+
+        // Get proxy config value
+        uint256 config = mapStakingProxyConfigs[stakingProxy];
+
+        // Check for whitelisted staking proxy type
+        if (config == 0) {
+            revert ZeroValue();
+        }
+
+        // Get staking guard address
+        (address stakingGuard,,,,) = unwrapStakingConfig(config);
+
+        // Check for access: only staking guard
+        if (msg.sender != stakingGuard) {
+            revert UnauthorizedAccount(msg.sender);
         }
 
         // Traverse curating agents
@@ -834,10 +872,13 @@ contract ExternalStakingDistributor is Implementation, ERC721TokenReceiver {
                 revert ZeroAddress();
             }
 
-            mapCuratingAgents[curatingAgents[i]] = statuses[i];
+            // Encode staking hash
+            bytes32 stakingHash = keccak256(abi.encode(stakingGuard, stakingProxy));
+            // Set curating agent status
+            mapStakingGuardHashCuratingAgents[stakingHash][curatingAgents[i]] = statuses[i];
         }
 
-        emit SetCuratingAgentStatuses(curatingAgents, statuses);
+        emit SetCuratingAgentStatuses(stakingGuard, stakingProxy, curatingAgents, statuses);
     }
 
     /// @dev Deposits OLAS for further staking.
@@ -962,11 +1003,13 @@ contract ExternalStakingDistributor is Implementation, ERC721TokenReceiver {
     }
 
     /// @dev Wraps staking proxy config: reward factors and staking type value.
+    /// @param stakingGuard Staking proxy proposer address.
     /// @param collectorRewardFactor Collector reward factor.
     /// @param protocolRewardFactor Protocol reward factor.
     /// @param curatingAgentRewardFactor Curating agent reward factor.
     /// @param stakingType Staking type.
     function wrapStakingConfig(
+        address stakingGuard,
         uint256 collectorRewardFactor,
         uint256 protocolRewardFactor,
         uint256 curatingAgentRewardFactor,
@@ -975,11 +1018,12 @@ contract ExternalStakingDistributor is Implementation, ERC721TokenReceiver {
         // Staking config: collectorRewardFactor 16 bits | protocolRewardFactor 16 bits
         //                 | curatingAgentRewardFactor 16 bits | stakingType 8 bits
         config = uint8(stakingType) | curatingAgentRewardFactor << 8 | protocolRewardFactor << 24
-            | collectorRewardFactor << 40;
+            | collectorRewardFactor << 40 | uint160(stakingGuard) << 56;
     }
 
     /// @dev Unwraps staking proxy config: reward factors and staking type value.
     /// @param config Staking proxy config value.
+    /// @return stakingGuard Staking proxy proposer address.
     /// @return collectorRewardFactor Collector reward factor.
     /// @return protocolRewardFactor Protocol reward factor.
     /// @return curatingAgentRewardFactor Curating agent reward factor.
@@ -988,15 +1032,17 @@ contract ExternalStakingDistributor is Implementation, ERC721TokenReceiver {
         public
         pure
         returns (
+            address stakingGuard,
             uint256 collectorRewardFactor,
             uint256 protocolRewardFactor,
             uint256 curatingAgentRewardFactor,
             StakingType stakingType
         )
     {
-        // Staking config: collectorRewardFactor 16 bits | protocolRewardFactor 16 bits
+        // Staking config: stakingGuard 160 bits | collectorRewardFactor 16 bits | protocolRewardFactor 16 bits
         //                 | curatingAgentRewardFactor 16 bits | stakingType 8 bits
-        collectorRewardFactor = config >> 40;
+        stakingGuard = address(uint160(config >> 56));
+        collectorRewardFactor = uint16(config >> 40);
         protocolRewardFactor = uint16(config >> 24);
         curatingAgentRewardFactor = uint16(config >> 8);
         stakingType = StakingType(uint8(config));
