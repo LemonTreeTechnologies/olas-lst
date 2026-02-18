@@ -785,12 +785,8 @@ contract ExternalStakingDistributor is Implementation, ERC721TokenReceiver {
             }
 
             // Check proxy configs
-            (
-                ,
-                uint256 collectorRewardFactor,
-                uint256 protocolRewardFactor,
-                uint256 curatingAgentRewardFactor,
-            ) = unwrapStakingConfig(configs[i]);
+            (, uint256 collectorRewardFactor, uint256 protocolRewardFactor, uint256 curatingAgentRewardFactor,) =
+                unwrapStakingConfig(configs[i]);
 
             // Check for collector and zero value
             if (collectorRewardFactor == 0) {
