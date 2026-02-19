@@ -15,6 +15,9 @@
   "baseL1StandardBridgeProxyAddress": "0x3154Cf16ccdb4C6d922629664174b904d80F2C35",
   "baseL1CrossDomainMessengerProxyAddress": "0x866E82a600A1414e583f7F13623F1aC5d58b0Afa",
   "baseOLASAddress": "0x54330d28ca3357F294334BDC454a032e7f353416",
+  "modeL1StandardBridgeProxyAddress": "0x735aDBbE72226BD52e818E7181953f42E3b0FF21",
+  "modeL1CrossDomainMessengerProxyAddress": "0x95bDCA6c8EdEB69C98Bd5bd17660BaCef1298A6f",
+  "modeOLASAddress": "0xcfD1D50ce23C46D3Cf6407487B2F8934e96DC8f9",
   "lockFactor": "100",
   "withdrawDelay": "691200",
   "stOLASAddress": "0xab4C5BB0797Ca25e93a4af2E8FECD7Fcac0F2c9b",
@@ -31,5 +34,7 @@
   "gnosisDepositProcessorL1Address": "0xeB7613bfbb40fab1DA73DC0b1c16Ec13639C305B",
   "gnosisStakingProcessorL2Address": "0xDAE0B11e5bF81216283cB95d30039fA3D650eFE3",
   "baseDepositProcessorL1Address": "0x87AA04e563110DC484bf1580b16986b34987431e",
-  "baseStakingProcessorL2Address": "0xCAF018A23a104095180e298856AC1a415f9831E8"
+  "baseStakingProcessorL2Address": "0xCAF018A23a104095180e298856AC1a415f9831E8",
+  "modeDepositProcessorL1Address": "0xB6e7f6633B3b6F319284C66131731c8A090e98F2",
+  "modeStakingProcessorL2Address": "0x40abf47B926181148000DbCC7c8DE76A3a61a66f"
 }

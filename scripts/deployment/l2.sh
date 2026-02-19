@@ -33,7 +33,7 @@ set -euo pipefail
 ./scripts/deployment/deploy_l2_14_multisig_guard.sh $1
 
 # Deploy MultisigGuard Proxy
-./scripts/deployment/deploy_l2_14_multisig_guard_proxy.sh $1
+./scripts/deployment/deploy_l2_15_multisig_guard_proxy.sh $1
 
 # Change MultisigGuardProxy in ExternalStakingDistributorProxy
 ./scripts/deployment/script_l2_09_change_multisig_guard.sh $1
