@@ -50,4 +50,8 @@ interface IStaking {
     /// @param serviceId.
     /// @return stakingState Staking state of the service.
     function getStakingState(uint256 serviceId) external view returns (StakingState stakingState);
+
+    /// @dev Gets available rewards.
+    /// @return Available rewards amount.
+    function availableRewards() external view returns (uint256);
 }
