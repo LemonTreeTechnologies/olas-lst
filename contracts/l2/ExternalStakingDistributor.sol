@@ -680,8 +680,12 @@ contract ExternalStakingDistributor is Implementation, ERC721TokenReceiver {
         }
         _locked = 2;
 
-        // Check for access: whitelisted managing agent or owner
-        if (!mapManagingAgents[msg.sender] && msg.sender != owner) {
+        // Get staking proxy available rewards amount
+        uint256 availableRewards = IStaking(stakingProxy).availableRewards();
+
+        // Check for zero rewards balance and access: whitelisted managing agent or owner
+        // msg.sender does not matter if rewards are no longer available
+        if (availableRewards > 0 && !mapManagingAgents[msg.sender] && msg.sender != owner) {
             revert UnauthorizedAccount(msg.sender);
         }
 

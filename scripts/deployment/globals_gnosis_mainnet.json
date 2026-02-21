@@ -55,5 +55,6 @@
   "multisigGuardAddress": "0xA26CfDC0e84A04444b6a468c1d1F7191D19541E6",
   "multisigGuardProxyAddress": "0xBD645cf2D4F04A1c12B97fe2a8b4A09EF50F1896",
   "gnosisDepositProcessorL1Address": "0xeB7613bfbb40fab1DA73DC0b1c16Ec13639C305B",
-  "gnosisStakingProcessorL2Address": "0xDAE0B11e5bF81216283cB95d30039fA3D650eFE3"
+  "gnosisStakingProcessorL2Address": "0xDAE0B11e5bF81216283cB95d30039fA3D650eFE3",
+  "guardAddress": "0x860FFb692cE3b4f2fd24aEe9bcc82357F863f88e"
 }
