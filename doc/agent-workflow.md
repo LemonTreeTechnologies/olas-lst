@@ -47,7 +47,7 @@ contract with the following parameters:
 - `_data`: `encodedData` value from `UserRequestForSignature()` event from [AMB (Home)](https://gnosisscan.io/address/0x75Df5AF045d91108662D8080fD1FEFAd6aA0bb59#events) contract;
 - `_signatures`: from the return value of [`getSignatures()`](https://gnosisscan.io/address/0x7d94ece17e81355326e3359115D4B02411825EdD#readContract#F2) method.
 
-Read full Gnosis guide of how to call execute signatures [here](https://docs.gnosischain.com/bridges/About%20Token%20Bridges/amb-bridge#how-to-call-executesignatures-on-foreign-amb-ethereum).
+Read full Gnosis guide on how to call execute signatures [here](https://docs.gnosischain.com/bridges/About%20Token%20Bridges/amb-bridge#how-to-call-executesignatures-on-foreign-amb-ethereum).
 
 #### Base bridge
 
@@ -126,7 +126,7 @@ Each staked service has a controlling [ActivityModule](../contracts/l2/ActivityM
 to all the LST service activity. In order to claim reward tokens and immediately transfer them to [Collector](../contracts/l2/Collector.sol)
 contract, agents need to call the `claim()` function, which triggers the `checkpoint()` function call as well of a corresponding `stakingProxy` contract.
 
-Events to track staking proxy addresses, stacked service Ids and their corresponding activity modules in [StakingManager](../contracts/l2/StakingManager.sol) proxy contract:
+Events to track staking proxy addresses, staked service Ids and their corresponding activity modules in [StakingManager](../contracts/l2/StakingManager.sol) proxy contract:
 ```solidity
 event Staked(address indexed stakingProxy, uint256 indexed serviceId, address activityModule);
 event Unstaked(address indexed stakingProxy, uint256 indexed serviceId, address activityModule);

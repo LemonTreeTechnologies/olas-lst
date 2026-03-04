@@ -169,6 +169,7 @@ contract ExternalStakingDistributor is Implementation, ERC721TokenReceiver {
         uint256 stakingDeposit,
         uint256 stakedBalance
     );
+    event ExternalServiceRestaked(address indexed sender, address indexed stakingProxy, uint256 indexed serviceId);
     event Deployed(uint256 indexed serviceId, address indexed multisig);
     event RewardsDistributed(
         uint256 indexed serviceId,
@@ -683,9 +684,20 @@ contract ExternalStakingDistributor is Implementation, ERC721TokenReceiver {
         // Get staking proxy available rewards amount
         uint256 availableRewards = IStaking(stakingProxy).availableRewards();
 
+        // Check if service is evicted
+        IStaking.StakingState stakingState = IStaking(stakingProxy).getStakingState(serviceId);
+
+        // Check for unstaked state
+        if (stakingState == IStaking.StakingState.Unstaked) {
+            revert ZeroValue();
+        }
+
         // Check for zero rewards balance and access: whitelisted managing agent or owner
-        // msg.sender does not matter if rewards are no longer available
-        if (availableRewards > 0 && !mapManagingAgents[msg.sender] && msg.sender != owner) {
+        // msg.sender does not matter if rewards are no longer available, or if the service is evicted
+        if (
+            stakingState == IStaking.StakingState.Staked && availableRewards > 0
+                && !(mapManagingAgents[msg.sender] || msg.sender == owner)
+        ) {
             revert UnauthorizedAccount(msg.sender);
         }
 
@@ -756,6 +768,58 @@ contract ExternalStakingDistributor is Implementation, ERC721TokenReceiver {
 
             emit Withdraw(msg.sender, operation, amount, unstakeRequestedAmount);
         }
+
+        _locked = 1;
+    }
+
+    /// @dev Re-stakes evicted specified service Id.
+    /// @param stakingProxy Staking proxy address.
+    /// @param serviceId Service Id.
+    function reStake(address stakingProxy, uint256 serviceId) external {
+        // Reentrancy guard
+        if (_locked > 1) {
+            revert ReentrancyGuard();
+        }
+        _locked = 2;
+
+        // Check for zero address
+        if (stakingProxy == address(0)) {
+            revert ZeroAddress();
+        }
+
+        // Check for zero value
+        if (serviceId == 0) {
+            revert ZeroValue();
+        }
+
+        // Check if service is evicted
+        IStaking.StakingState stakingState = IStaking(stakingProxy).getStakingState(serviceId);
+
+        // Check for evicted state
+        if (stakingState != IStaking.StakingState.Evicted) {
+            revert ZeroValue();
+        }
+
+        // Check for access: curating agent or managing agent, or owner
+        if (!(mapCuratingAgents[msg.sender] || mapManagingAgents[msg.sender] || msg.sender == owner)) {
+            revert UnauthorizedAccount(msg.sender);
+        }
+
+        // Unstake service
+        uint256 reward = IStaking(stakingProxy).unstake(serviceId);
+
+        if (reward > 0) {
+            // Distribute leftover rewards, if not zero
+            _distributeRewards(stakingProxy, serviceId, reward);
+        }
+
+        // Approve service NFT for re-staking
+        INFToken(serviceRegistry).approve(stakingProxy, serviceId);
+
+        // Stake service
+        IStaking(stakingProxy).stake(serviceId);
+
+        emit ExternalServiceRestaked(msg.sender, stakingProxy, serviceId);
 
         _locked = 1;
     }

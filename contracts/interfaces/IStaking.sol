@@ -5,7 +5,8 @@ pragma solidity ^0.8.30;
 interface IStaking {
     enum StakingState {
         Unstaked,
-        Staked
+        Staked,
+        Evicted
     }
 
     /// @dev Gets set of agent Ids.
@@ -54,4 +55,11 @@ interface IStaking {
     /// @dev Gets available rewards.
     /// @return Available rewards amount.
     function availableRewards() external view returns (uint256);
+
+    /// @dev Checkpoint to allocate rewards up until a current time.
+    /// @return Staking service Ids (excluding evicted ones within a current epoch).
+    /// @return Set of reward-eligible service Ids.
+    /// @return Corresponding set of reward-eligible service rewards.
+    /// @return Evicted service Ids.
+    function checkpoint() external returns (uint256[] memory, uint256[] memory, uint256[] memory, uint256[] memory);
 }
