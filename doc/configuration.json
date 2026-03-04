@@ -127,7 +127,7 @@
       {
         "name": "ExternalStakingDistributor",
         "artifact": "abis/0.8.30/ExternalStakingDistributor.json",
-        "address": "0x45aE9211E9c3853229e3D865050BA9979296CD36"
+        "address": "0x099bd4e8535E58A2A482Ce69278c5E756831d533"
       },
       {
         "name": "ExternalStakingDistributorProxy",
@@ -203,7 +203,7 @@
       {
         "name": "ExternalStakingDistributor",
         "artifact": "abis/0.8.30/ExternalStakingDistributor.json",
-        "address": "0x4A26F79b9dd73a48d57ce4DF70295A875afa006c"
+        "address": "0xDAE0B11e5bF81216283cB95d30039fA3D650eFE3"
       },
       {
         "name": "ExternalStakingDistributorProxy",

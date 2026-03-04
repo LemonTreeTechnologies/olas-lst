@@ -46,7 +46,7 @@
   "beaconAddress": "0xEfF4A1D9faF5c750d5E32754c40Cf163767C63A4",
   "stakingManagerAddress": "0x327F1da21255d1d02cF2e7155659F8FBf12dB4ee",
   "stakingManagerProxyAddress": "0xcfA10d192c3999b5CA59aD3c7512c40f1B919e01",
-  "externalStakingDistributorAddress": "0x7E8C636FBD0D9085C112680d8C3fde701452dcb5",
+  "externalStakingDistributorAddress": "0xDAE0B11e5bF81216283cB95d30039fA3D650eFE3",
   "externalStakingDistributorProxyAddress": "0x40abf47B926181148000DbCC7c8DE76A3a61a66f",
   "multisigGuardAddress": "0x2362FC35f0e8ecA1C1eA8878aC079a518297A373",
   "multisigGuardProxyAddress": "0x4D3911420a8E4E7dB8c979f4915dA8983C5e3ba2",
