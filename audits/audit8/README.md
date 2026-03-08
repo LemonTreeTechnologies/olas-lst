@@ -171,15 +171,4 @@ The protocol demonstrates mature defensive coding patterns:
 
 ---
 
-## Audit Artifacts
-
-| File | Description |
-|------|-------------|
-| `phase1-architecture-map.md` | Contract structure, call graph, access control |
-| `phase2-invariants.md` | Core invariants, disproved findings, Phase 3 candidates |
-| `phase3-attack-discovery.md` | Attack investigation results, EVM/DeFi checklists |
-| `phase5-final-report.md` | This report |
-
----
-
 *Audit conducted using the Security Audit Playbook v2.8. All findings were verified using disprove-first methodology with exact file:line references.*
