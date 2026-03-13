@@ -18,7 +18,9 @@ It is meant to accompany `README.md` and serve as a quick reference for develope
 - **`UnstakeRelayer`** — handles returns of permanently closed staking model unstakes; tops up `stOLAS` with retired reserves.
 
 **L2 (Gnosis, Base, etc.):**
-- **`StakingManager` / `ExternalStakingDistributor` / `StakingTokenLocked`** — staking logic for services, accrual of rewards, initiation of stake and unstake.
+- **`StakingManager`** — orchestrates internal service deployment/staking for LST-managed services.
+- **`ExternalStakingDistributor`** — manages external staking on third-party staking proxies. Deploys services by creating Safe multisigs (with self as module), stakes/unstakes/re-stakes services, claims rewards and distributes them (split between Collector for L1 bridging, protocol via `topUpProtocol`, and curating agent per configurable reward factors). Supports two staking types: V1 (rewards land on service multisig, distributed via `execTransactionFromModule`) and V2 (rewards land directly on the contract). Access control: owner can do everything; whitelisted **managing agents** can force unstakes; per-proxy **curating agents** (guarded by a **staking guard** address) can stake. Receives OLAS deposits from L2 staking processor and handles withdraw/unstake requests back through Collector.
+- **`StakingTokenLocked`** — restricted StakingToken that only allows StakingManager as staker.
 - **`Collector`** — bridge intermediary: routes collected tokens back to L1.
 
 **Bridging Processors:**  

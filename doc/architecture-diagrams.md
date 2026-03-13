@@ -24,6 +24,7 @@ flowchart LR
 
   subgraph L2 [L2 — Gnosis, Base]
     SM[StakingManager]
+    ESD[ExternalStakingDistributor]
     STL[StakingTokenLocked]
     Coll[Collector]
     Svc[Services]
@@ -54,6 +55,10 @@ flowchart LR
   A-->|claim|AM
   AM-->|claim|SM
   AM-->|controls|Svc
+  BP2 -->|deposit OLAS| ESD
+  ESD -->|stake / unstake / re-stake| Svc
+  ESD -->|claim rewards| Svc
+  ESD -->|distribute rewards| Coll
 
   %% C) Withdraw & Unstake (UNSTAKE → Treasury)
   U -->|request to withdraw and finalize| T
@@ -86,6 +91,7 @@ sequenceDiagram
   participant UR as UnstakeRelayer
   participant BP1 as Bridge (L1)
   participant SM as StakingManager
+  participant ESD as ExternalStakingDistributor
   participant STL as StakingTokenLocked
   participant Coll as Collector
   participant S as Services
@@ -108,6 +114,14 @@ sequenceDiagram
   BP1->>Dist: deliver OLAS (REWARD)
   Dist->>V: top up vault balance
   Dist-->>V: optional lock to veOLAS
+
+  %% B2) External Staking (ExternalStakingDistributor)
+  BP1->>ESD: deposit OLAS (via L2 staking processor)
+  ESD->>S: deploy service (create Safe multisig, stake)
+  S->>ESD: rewards accrue
+  ESD->>ESD: claim & distribute rewards
+  ESD->>Coll: collector share (topUpBalance REWARD)
+  ESD->>Coll: protocol share (topUpProtocol)
 
   %% C) Withdraw with possible shortfall (UNSTAKE -> Treasury)
   U->>T: request withdraw
@@ -142,7 +156,8 @@ sequenceDiagram
 - **UnstakeRelayer** — receives **UNSTAKE_RETIRED** returns and forwards to `stOLAS.topUpRetiredBalance` (does not directly fund Treasury payouts).
 
 **L2 components**
-- **StakingManager / StakingTokenLocked** — manage staking lifecycle for services and accrue rewards.
+- **StakingManager / StakingTokenLocked** — manage internal staking lifecycle for LST services and accrue rewards.
+- **ExternalStakingDistributor** — manages external staking on third-party staking proxies. Deploys services (creates Safe multisigs with self as module), stakes/unstakes/re-stakes, claims and distributes rewards split between Collector (for L1 bridging), protocol (`topUpProtocol`), and curating agents per configurable reward factors (must sum to 100%). Supports V1 (rewards on multisig) and V2 (rewards on contract) staking types. Access control: owner, whitelisted managing agents (unstakes), per-proxy curating agents with staking guards. Receives OLAS from L2 staking processor (`deposit`) and handles withdraw/unstake requests back through Collector (`withdrawAndRequestUnstake`, `unstakeAndWithdraw`).
 - **Collector** — bridges ops/tokens to L1 with explicit routing for: **REWARD**, **UNSTAKE**, **UNSTAKE_RETIRED**.
 
 **Bridge Processor (L1/L2)** — abstract transport for messages + OLAS between chains.

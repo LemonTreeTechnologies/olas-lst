@@ -156,6 +156,31 @@ if ((stakingProxy.getNumServiceIds() > 0) && (block.timestamp - stakingProxy.tsC
 This check is going to skip the `checkpoint()` call if no agents are staked or if the checkpoint has been already
 triggered within the `livenessPeriod` time.
 
+### External Staking (ExternalStakingDistributor)
+
+The [ExternalStakingDistributor](../contracts/l2/ExternalStakingDistributor.sol) manages staking on third-party staking proxy contracts. It deploys services (creating Safe multisigs with itself as module), stakes/unstakes/re-stakes them, and claims and distributes rewards.
+
+**Staking:** Whitelisted curating agents (or the owner) call `stake()` to deploy a service on a whitelisted staking proxy. The contract creates a Safe multisig, registers it as a service, and stakes it. The curating agent is recorded per service.
+
+**Claiming rewards:** Agents call `claim()` with arrays of staking proxies and service Ids. Rewards are distributed according to per-proxy configurable factors (must sum to 100%):
+- **Collector share** — sent to Collector via `topUpBalance(amount, REWARD)` for L1 bridging
+- **Protocol share** — sent to Collector via `topUpProtocol(amount)` for protocol use
+- **Curating agent share** — transferred directly to the curating agent address
+
+For V1 staking types, rewards land on the service multisig and are distributed via `execTransactionFromModule`. For V2 staking types, rewards land directly on the contract.
+
+**Unstaking:** Managing agents (or the owner) call `unstakeAndWithdraw()` to unstake a service, distribute remaining rewards, and optionally fulfill pending withdraw requests through Collector. Anyone can trigger unstake if the staking proxy has zero available rewards or if the service is evicted.
+
+**Re-staking:** If a service is evicted, curating agents, managing agents, or the owner can call `reStake()` to unstake and immediately re-stake it.
+
+Events to track external staking activity:
+```solidity
+event ExternalServiceStaked(address indexed sender, address indexed stakingProxy, uint256 indexed serviceId, uint256 agentId, bytes32 configHash, uint256 stakingDeposit, uint256 stakedBalance);
+event ExternalServiceUnstaked(address indexed sender, address indexed stakingProxy, uint256 indexed serviceId, uint256 stakingDeposit, uint256 stakedBalance);
+event ExternalServiceRestaked(address indexed sender, address indexed stakingProxy, uint256 indexed serviceId);
+event Claimed(address[] stakingProxies, uint256[] serviceIds, uint256[] rewards);
+```
+
 ### Trigger L2 to L1 Tokens Bridging
 
 Each L2 [Collector](../contracts/l2/Collector.sol) proxy contract collects OLAS from **REWARD** / **UNSTAKE** / **UNSTAKE_RETIRED**
