@@ -74,6 +74,9 @@ error Overflow(uint256 provided, uint256 max);
 /// @dev Caught reentrancy violation.
 error ReentrancyGuard();
 
+/// @dev Wrong length of arrays.
+error WrongArrayLength();
+
 /// @title Treasury - Smart contract for treasury
 contract Treasury is Implementation, ERC6909 {
     event WithdrawDelayUpdates(uint256 withdrawDelay);
@@ -198,13 +201,31 @@ contract Treasury is Implementation, ERC6909 {
         if (stakedBalanceBefore > stakedBalanceAfter) {
             uint256 withdrawDiff = stakedBalanceBefore - stakedBalanceAfter;
 
+            // Track remaining msg.value for bridge interactions
+            uint256 remainingValue = msg.value;
+
             // Check if unstake from externals is requested
             if (chainIds[0].length > 0) {
+                // Check that external amounts and values arrays match
+                if (externalAmounts.length != values[0].length) {
+                    revert WrongArrayLength();
+                }
+
                 uint256 totalExternalAmount;
-                // Traverse external amounts, if any
+                uint256 externalValue;
+                // Traverse external amounts and values
                 for (uint256 i = 0; i < externalAmounts.length; ++i) {
                     totalExternalAmount += externalAmounts[i];
+                    externalValue += values[0][i];
                 }
+
+                // Check that msg.value covers external bridge values
+                if (remainingValue < externalValue) {
+                    revert Overflow(externalValue, remainingValue);
+                }
+
+                // Deduct external value from remaining
+                remainingValue -= externalValue;
 
                 // Check for overflow
                 if (totalExternalAmount > withdrawDiff) {
@@ -217,15 +238,26 @@ contract Treasury is Implementation, ERC6909 {
                 }
 
                 // First, unstake from external proxies
-                IDepository(depository)
-                    .unstakeExternal(chainIds[0], externalAmounts, bridgePayloads[0], values[0], msg.sender);
+                IDepository(depository).unstakeExternal{value: externalValue}(
+                    chainIds[0], externalAmounts, bridgePayloads[0], values[0], msg.sender
+                );
             }
 
             // Check for withdrawDiff
             if (withdrawDiff > 0) {
                 // Second, unstake from LST staking proxies, if still required
-                IDepository(depository)
-                    .unstake(withdrawDiff, chainIds[1], stakingProxies, bridgePayloads[1], values[1], msg.sender);
+                // Check for remainingValue corresponding to sum(values[1]) is handled in unstake function itself
+                IDepository(depository).unstake{value: remainingValue}(
+                    withdrawDiff, chainIds[1], stakingProxies, bridgePayloads[1], values[1], msg.sender
+                );
+            } else if (remainingValue > 0) {
+                // No LST unstaking needed, reject leftover ETH
+                revert Overflow(remainingValue, 0);
+            }
+        } else {
+            // No unstaking needed, reject any ETH sent
+            if (msg.value > 0) {
+                revert Overflow(msg.value, 0);
             }
         }
 

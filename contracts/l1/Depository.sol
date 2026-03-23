@@ -321,7 +321,7 @@ contract Depository is Implementation {
         if (refund > 0) {
             // If the call fails, ignore to avoid the attack that would prevent this function from executing
             // solhint-disable-next-line avoid-low-level-calls
-            (bool success,) = msg.sender.call{value: refund}("");
+            (bool success,) = sender.call{value: refund}("");
 
             emit ValueRefunded(sender, refund, success);
         }
