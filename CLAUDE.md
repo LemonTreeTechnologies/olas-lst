@@ -116,11 +116,6 @@ The project has undergone 9 internal audits (`audits/audit1` through `audits/aud
 
 ## Modified Contracts (not yet re-deployed)
 
-The following contracts have been modified after audit8/audit9 fixes and require re-deployment:
-
-| Contract | Layer | Changes |
-|---|---|---|
-| `contracts/l1/Treasury.sol` | L1 | `requestToWithdraw` now validates `msg.value`, forwards ETH to `unstakeExternal`/`unstake`; added `WrongArrayLength` error |
-| `contracts/l1/Distributor.sol` | L1 | `_increaseLock` resets OLAS approval to 0 on failure |
-| `contracts/l1/bridging/DefaultDepositProcessorL1.sol` | L1 | Removed `drain()` function and `Drained` event |
-| `contracts/l2/ExternalStakingDistributor.sol` | L2 | `reStake` uses `mapServiceIdCuratingAgents` instead of dead `mapCuratingAgents`; `setCuratingAgents` computes `stakingHash` outside loop; `unstakeAndWithdraw` validates `stakingProxy`/`serviceId` at entry |
+Contracts that have been modified but not yet re-deployed are tracked in
+[`MODIFIED_CONTRACTS.md`](MODIFIED_CONTRACTS.md). Keep that file in sync when changing a
+deployed contract, and clear entries once re-deployed.

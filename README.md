@@ -155,6 +155,7 @@ The test suite covers comprehensive E2E scenarios:
 - **External Audits**: v0.1.0 code review is [completed](audits/README.md)
 - **Open Source**: Full transparency with public repository
 - **Bug Bounty**: Program under consideration post-audit
+- **Pending Re-Deployment**: Contracts modified but not yet re-deployed are tracked in [MODIFIED_CONTRACTS.md](MODIFIED_CONTRACTS.md)
 
 ## Roadmap
 > This roadmap reflects the current design and audit notes. Items and ordering may be updated by governance. *(Last updated: 2025-08-20 12:14 UTC)*
