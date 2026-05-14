@@ -88,25 +88,27 @@ The protocol demonstrates mature defensive coding patterns:
 ### Medium: 0
 ### Low: 0
 
-### Informational: 4
+### Informational: 4 (all fixed)
 
-#### INFO-1: Missing ETH Forwarding in Treasury.requestToWithdraw
+#### INFO-1: Missing ETH Forwarding in Treasury.requestToWithdraw — FIXED
 | | |
 |---|---|
 | **Location** | Treasury.sol:220-221, 227-228 |
 | **Description** | `requestToWithdraw` is `payable` but doesn't forward `msg.value` to `Depository.unstake`/`unstakeExternal` calls |
 | **Impact** | None currently — Optimism and Gnosis bridges don't require ETH for L1→L2 messages. If a bridge requiring ETH is added, unstaking from Treasury would fail. |
 | **Recommendation** | Add `{value: ...}` forwarding or document that future bridges must not require ETH for L1→L2 UNSTAKE messages |
+| **Resolution** | Fixed. `requestToWithdraw` now validates `msg.value`, tracks `remainingValue`, and forwards `{value: externalValue}` to `unstakeExternal` and `{value: remainingValue}` to `unstake`. Reverts if leftover ETH remains. |
 
-#### INFO-2: Dangling OLAS Approval in Distributor
+#### INFO-2: Dangling OLAS Approval in Distributor — FIXED
 | | |
 |---|---|
 | **Location** | Distributor.sol:75 |
 | **Description** | If `Lock.increaseLock()` fails via low-level call, OLAS approval to Lock remains until next `distribute()` call |
 | **Impact** | None — Lock is immutable trusted address. Approval overwritten on next distribute(). |
 | **Recommendation** | Consider resetting approval to 0 after failed lock call |
+| **Resolution** | Fixed. Added `IToken(olas).approve(lock, 0)` in the failure branch of `_increaseLock()`. |
 
-#### INFO-3: ERC6909 Withdrawal Tokens Are Transferable
+#### INFO-3: ERC6909 Withdrawal Tokens Are Transferable — by design
 | | |
 |---|---|
 | **Location** | Treasury.sol:190, solmate ERC6909 |
@@ -114,7 +116,7 @@ The protocol demonstrates mature defensive coding patterns:
 | **Impact** | Feature, not bug. Enables secondary market for withdrawal claims. |
 | **Recommendation** | Document this behavior for users |
 
-#### INFO-4: Multiple Permissionless Trigger Functions
+#### INFO-4: Multiple Permissionless Trigger Functions — by design
 | | |
 |---|---|
 | **Location** | Depository.sol:763,829; Distributor.sol:125; UnstakeRelayer.sol:60; Collector.sol:317; ActivityModule.sol:303 |

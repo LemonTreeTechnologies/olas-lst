@@ -86,6 +86,9 @@ contract Distributor is Implementation {
 
             emit Locked(msg.sender, olasAmount, lockAmount, remainder);
         } else {
+            // Reset dangling approval
+            IToken(olas).approve(lock, 0);
+
             // lock amount is not locked, letting all olas amount be transferred to stOLAS
             remainder = olasAmount;
         }

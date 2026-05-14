@@ -681,28 +681,28 @@ contract ExternalStakingDistributor is Implementation, ERC721TokenReceiver {
         }
         _locked = 2;
 
-        // Get staking proxy available rewards amount
-        uint256 availableRewards = IStaking(stakingProxy).availableRewards();
-
-        // Check if service is evicted
-        IStaking.StakingState stakingState = IStaking(stakingProxy).getStakingState(serviceId);
-
-        // Check for unstaked state
-        if (stakingState == IStaking.StakingState.Unstaked) {
-            revert ZeroValue();
-        }
-
-        // Check for zero rewards balance and access: whitelisted managing agent or owner
-        // msg.sender does not matter if rewards are no longer available, or if the service is evicted
-        if (
-            stakingState == IStaking.StakingState.Staked && availableRewards > 0
-                && !(mapManagingAgents[msg.sender] || msg.sender == owner)
-        ) {
-            revert UnauthorizedAccount(msg.sender);
-        }
-
         // Check if service unstake is requested
         if (stakingProxy != address(0) && serviceId > 0) {
+            // Get staking proxy available rewards amount
+            uint256 availableRewards = IStaking(stakingProxy).availableRewards();
+
+            // Check if service is evicted
+            IStaking.StakingState stakingState = IStaking(stakingProxy).getStakingState(serviceId);
+
+            // Check for unstaked state
+            if (stakingState == IStaking.StakingState.Unstaked) {
+                revert ZeroValue();
+            }
+
+            // Check for zero rewards balance and access: whitelisted managing agent or owner
+            // msg.sender does not matter if rewards are no longer available, or if the service is evicted
+            if (
+                stakingState == IStaking.StakingState.Staked && availableRewards > 0
+                    && !(mapManagingAgents[msg.sender] || msg.sender == owner)
+            ) {
+                revert UnauthorizedAccount(msg.sender);
+            }
+
             // Calculate how many unstakes are needed
             uint256 minStakingDeposit = IStaking(stakingProxy).minStakingDeposit();
             uint256 fullStakingDeposit = minStakingDeposit * (1 + NUM_AGENT_INSTANCES);
@@ -800,8 +800,11 @@ contract ExternalStakingDistributor is Implementation, ERC721TokenReceiver {
             revert ZeroValue();
         }
 
-        // Check for access: curating agent or managing agent, or owner
-        if (!(mapCuratingAgents[msg.sender] || mapManagingAgents[msg.sender] || msg.sender == owner)) {
+        // Check for access: service curating agent, managing agent, or owner
+        if (
+            !(mapServiceIdCuratingAgents[serviceId] == msg.sender || mapManagingAgents[msg.sender]
+                || msg.sender == owner)
+        ) {
             revert UnauthorizedAccount(msg.sender);
         }
 
@@ -933,6 +936,9 @@ contract ExternalStakingDistributor is Implementation, ERC721TokenReceiver {
             revert UnauthorizedAccount(msg.sender);
         }
 
+        // Encode staking hash outside of the loop
+        bytes32 stakingHash = keccak256(abi.encode(stakingGuard, stakingProxy));
+
         // Traverse curating agents
         for (uint256 i = 0; i < numAgents; ++i) {
             // Check for zero address
@@ -940,8 +946,6 @@ contract ExternalStakingDistributor is Implementation, ERC721TokenReceiver {
                 revert ZeroAddress();
             }
 
-            // Encode staking hash
-            bytes32 stakingHash = keccak256(abi.encode(stakingGuard, stakingProxy));
             // Set curating agent status
             mapStakingGuardHashCuratingAgents[stakingHash][curatingAgents[i]] = statuses[i];
         }

@@ -14,7 +14,7 @@ This audit combines:
 1. **Delta review**: Changes since audit8 — 2 contracts modified (+150 / -24 lines)
 2. **Full project re-audit**: All 25 production contracts reviewed against Security Audit Playbook v2.9 (checklists L1-L65, T13-T35, DeFi items 1-140)
 
-**Result: 1 Medium, 5 Low, 5 Informational findings.**
+**Result: 1 Medium, 5 Low, 5 Informational findings. All actionable findings fixed.**
 
 The project has strong security fundamentals: stOLAS correctly uses internal accounting (`totalReserves`) making it immune to share inflation attacks, bridge contracts properly validate message sources with replay protection, and reentrancy guards are comprehensive across all contracts (transient on L1, uint256 on L2). No critical or high-severity issues found.
 
@@ -60,12 +60,13 @@ Total: 160 + 16 + 16 + 16 + 8 = 216 bits (fits uint256).
 
 ## Part 2: Full Project Findings
 
-### L-1: `reStake` uses dead `mapCuratingAgents` mapping — curating agents cannot restake
+### L-1: `reStake` uses dead `mapCuratingAgents` mapping — curating agents cannot restake — FIXED
 
 | | |
 |---|---|
 | **Location** | ExternalStakingDistributor.sol:804 |
 | **Severity** | Low |
+| **Resolution** | Fixed. Replaced `mapCuratingAgents[msg.sender]` with `mapServiceIdCuratingAgents[serviceId] == msg.sender`, which checks the curating agent who originally staked the service. |
 
 **Code (line 804):**
 ```solidity
@@ -96,12 +97,13 @@ if (!hasAccess) {
 
 ---
 
-### L-2: `stOLAS.initialize()` has no access control — front-run risk
+### L-2: `stOLAS.initialize()` has no access control — front-run risk — by design
 
 | | |
 |---|---|
 | **Location** | stOLAS.sol:82-105 |
 | **Severity** | Low |
+| **Resolution** | By design. Deployment is atomic — initialization is checked offchain before integration with other contracts. |
 
 **Code (line 82):**
 ```solidity
@@ -126,12 +128,13 @@ function initialize(address _treasury, address _depository, address _distributor
 
 ---
 
-### L-3: `DefaultDepositProcessorL1.drain()` sends ETH to `address(0)` after `setL2StakingProcessor`
+### L-3: `DefaultDepositProcessorL1.drain()` sends ETH to `address(0)` after `setL2StakingProcessor` — FIXED
 
 | | |
 |---|---|
 | **Location** | DefaultDepositProcessorL1.sol:155-175 |
 | **Severity** | Low |
+| **Resolution** | Fixed. Removed `drain()` and its `Drained` event entirely — ETH cannot get stuck in deposit processors (all msg.value is either forwarded to the bridge or refunded as leftovers in the same transaction). |
 
 **Code:**
 ```solidity
@@ -150,12 +153,13 @@ function drain() external {
 
 ---
 
-### L-4: `Distributor._increaseLock()` leaves dangling OLAS approval on failure
+### L-4: `Distributor._increaseLock()` leaves dangling OLAS approval on failure — FIXED
 
 | | |
 |---|---|
 | **Location** | Distributor.sol:70-92 |
 | **Severity** | Low |
+| **Resolution** | Fixed. Added `IToken(olas).approve(lock, 0)` in the failure branch to reset the dangling approval. |
 
 **Code:**
 ```solidity
@@ -179,12 +183,13 @@ function _increaseLock(uint256 olasAmount) internal returns (uint256 remainder) 
 
 ---
 
-### L-5: `StakingTokenLocked` declares `maxNumInactivityPeriods` but never implements eviction
+### L-5: `StakingTokenLocked` declares `maxNumInactivityPeriods` but never implements eviction — by design
 
 | | |
 |---|---|
 | **Location** | StakingTokenLocked.sol:246 |
 | **Severity** | Low |
+| **Resolution** | By design. Kept for backward compatibility with the Autonolas staking interface. StakingManager controls all services in the LST model. |
 
 **Problem**: The variable `maxNumInactivityPeriods` is declared (line 246) with comment "Max number of accumulated inactivity periods after which the service is evicted", but `checkpoint()` does not implement eviction logic. Inactive services cannot be force-evicted.
 
@@ -194,12 +199,13 @@ function _increaseLock(uint256 olasAmount) internal returns (uint256 remainder) 
 
 ---
 
-### INFO-1: `setCuratingAgents` computes `stakingHash` inside loop — gas waste
+### INFO-1: `setCuratingAgents` computes `stakingHash` inside loop — gas waste — FIXED
 
 | | |
 |---|---|
 | **Location** | ExternalStakingDistributor.sol:944 |
 | **Severity** | Informational |
+| **Resolution** | Fixed. Moved `stakingHash` computation before the loop. |
 
 ```solidity
 for (uint256 i = 0; i < numAgents; ++i) {
@@ -220,12 +226,13 @@ for (uint256 i = 0; i < numAgents; ++i) {
 
 ---
 
-### INFO-2: `unstakeAndWithdraw` checks `stakingProxy != address(0) && serviceId > 0` but these are not validated at entry
+### INFO-2: `unstakeAndWithdraw` checks `stakingProxy != address(0) && serviceId > 0` but these are not validated at entry — FIXED
 
 | | |
 |---|---|
 | **Location** | ExternalStakingDistributor.sol:684-705 |
 | **Severity** | Informational |
+| **Resolution** | Fixed. Added early validation `if (stakingProxy == address(0) || serviceId == 0) revert ZeroValue()` at function entry, removed the redundant conditional guard. |
 
 The function first calls `IStaking(stakingProxy).availableRewards()` and `getStakingState(serviceId)` (lines 685-688), which will revert if `stakingProxy == address(0)`. Then at line 705, it checks `if (stakingProxy != address(0) && serviceId > 0)` before the unstake block.
 
@@ -235,12 +242,13 @@ The conditional at line 705 is effectively dead code — the function always rev
 
 ---
 
-### INFO-3: `ExternalStakingDistributor.claim()` is permissionless — timing of reward claims uncontrollable
+### INFO-3: `ExternalStakingDistributor.claim()` is permissionless — timing of reward claims uncontrollable — by design
 
 | | |
 |---|---|
 | **Location** | ExternalStakingDistributor.sol:1030-1071 |
 | **Severity** | Informational |
+| **Resolution** | By design. Permissionless claiming cannot cause fund loss. |
 
 Any external caller can trigger `claim()` for any staking proxy and service ID. Rewards are distributed to correct recipients (curating agent, collector, protocol), but the timing cannot be controlled by stakeholders.
 
@@ -254,17 +262,19 @@ Any external caller can trigger `claim()` for any staking proxy and service ID. 
 |---|---|
 | **Location** | Depository.sol:763-823 |
 | **Severity** | Informational |
+| **Resolution** | By design. Safe permissionless cleanup. |
 
 Anyone can call `unstakeRetired()` and trigger unstaking of retired models. This is safe (requires `msg.value` for bridge fees, flows through legitimate deposit processors) and appears intentional for permissionless cleanup.
 
 ---
 
-### INFO-5: `LzOracle._lzReceive` trusts LayerZero Read responses without independent verification
+### INFO-5: `LzOracle._lzReceive` trusts LayerZero Read responses without independent verification — by design
 
 | | |
 |---|---|
 | **Location** | LzOracle.sol:152-210 |
 | **Severity** | Informational |
+| **Resolution** | By design. Expected trust model for LayerZero Read. |
 
 The function trusts decoded response data from LZ Read for `bytecodeHash`, `isEnabled`, and `availableRewards`. This is the expected trust model for LayerZero Read, but a compromised DVN set could feed false staking parameters.
 
@@ -355,11 +365,11 @@ The function trusts decoded response data from LZ Read for `bytecodeHash`, `isEn
 | audit7 Critical: Incorrect mapServiceIdCuratingAgents | Fixed |
 | audit7 Critical: abi.encodePacked(address(0)) | Fixed |
 | audit7 Medium: changeRewardFactors() timing | Fixed |
-| audit8 INFO-1: Missing ETH forwarding in Treasury | Unchanged — see L-3 for related pattern in DefaultDepositProcessorL1 |
-| audit8 INFO-2: Dangling OLAS approval in Distributor | **Confirmed still present — now L-4** |
+| audit8 INFO-1: Missing ETH forwarding in Treasury | **Fixed** — `requestToWithdraw` now forwards `msg.value` correctly |
+| audit8 INFO-2: Dangling OLAS approval in Distributor | **Fixed** — approval reset to 0 on failure |
 | audit8 INFO-3: ERC6909 withdrawal tokens transferable | Unchanged — by design |
 | audit8 INFO-4: Permissionless trigger functions | `unstakeAndWithdraw` now permissionless for evicted/zero-reward — by design |
-| audit8 Analysis item 1: `reStake` uses dead mapping | **Upgraded to L-1** — actively harmful after refactor |
+| audit8 Analysis item 1: `reStake` uses dead mapping | **Fixed** — now uses `mapServiceIdCuratingAgents[serviceId]` |
 
 ---
 

@@ -11,6 +11,7 @@ An `audit6` with a focus `main` branch [audit6](https://github.com/kupermind/ola
 An `audit7` with a focus `main` branch [audit7](https://github.com/LemonTreeTechnologies/olas-lst/blob/main/audits/audit7). <br>
 An `audit8` with a focus `main` branch [audit8](https://github.com/LemonTreeTechnologies/olas-lst/blob/main/audits/audit8). <br>
 An `audit9` — full project re-audit + delta review [audit9](https://github.com/LemonTreeTechnologies/olas-lst/blob/main/audits/audit9). <br>
+An `audit10` — post-audit fix review of `post-audit` branch [audit10](https://github.com/LemonTreeTechnologies/olas-lst/blob/main/audits/audit10). <br>
 
 ### External audits
 External audit reports are listed in their historical order:
