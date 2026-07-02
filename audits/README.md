@@ -12,6 +12,7 @@ An `audit7` with a focus `main` branch [audit7](https://github.com/LemonTreeTech
 An `audit8` with a focus `main` branch [audit8](https://github.com/LemonTreeTechnologies/olas-lst/blob/main/audits/audit8). <br>
 An `audit9` — full project re-audit + delta review [audit9](https://github.com/LemonTreeTechnologies/olas-lst/blob/main/audits/audit9). <br>
 An `audit10` — post-audit fix review of `post-audit` branch [audit10](https://github.com/LemonTreeTechnologies/olas-lst/blob/main/audits/audit10). <br>
+An `audit11` — full post-audit re-review of all contracts (with runnable PoCs) [audit11](https://github.com/LemonTreeTechnologies/olas-lst/blob/main/audits/audit11). <br>
 
 ### External audits
 External audit reports are listed in their historical order:
