@@ -27,6 +27,7 @@
   "gnosisSafeMultisigImplementationAddress": "0x3C1fF68f5aa342D296d4DEe4Bb1cACCA912D95fE",
   "gnosisSafeSameAddressMultisigImplementationAddress": "0x6e7f594f680f7aBad18b7a63de50F0FeE47dfD06",
   "safeMultisigWithRecoveryModuleAddress": "0xB4eB492bbfDcE5ccc11d675797cCF090eB0bCbd6",
+  "recoveryModuleAddress": "0x0Cb12457ed26d572c5e4A50f30b6f7A904662a72",
   "multisigProxyHash130": "0xb89c1b3bdf2cf8827818646bce9a8f6e372885f8c55e5c07acbd307cb133b000",
   "stakingImplementationBytecodeHash": "0xfaa25679442cc1708855bb2e9a6cf2464aa44435009791cb122ce941c25672c7",
   "agentId": "85",

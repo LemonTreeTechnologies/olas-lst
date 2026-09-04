@@ -21,3 +21,29 @@ No new vulnerabilities introduced."). They still require re-deployment.
 | `contracts/l1/Distributor.sol` | L1 | `_increaseLock` resets dangling OLAS approval to 0 in the zero-lock branch |
 | `contracts/l1/bridging/DefaultDepositProcessorL1.sol` | L1 | Removed `drain()` function and `Drained` event |
 | `contracts/l2/ExternalStakingDistributor.sol` | L2 | `unstakeAndWithdraw` moves staking-proxy reads inside the service-unstake condition and validates `stakingProxy`/`serviceId` at entry; `reStake` uses `mapServiceIdCuratingAgents` instead of dead `mapCuratingAgents`; `setCuratingAgents` computes `stakingHash` outside the loop |
+
+## Pending service re-deployment fix
+
+`GnosisSafeSameAddressMultisig` has been removed from the `ServiceRegistryL2` multisig whitelist on
+Gnosis, Base and Mode, so every `deploy()` routed through it reverts `UnauthorizedMultisig`. This
+blocks `StakingManager` service re-deployment, which is a live liveness failure: services unstaked
+by `StakingManager.unstake` sit in `PreRegistration` and the next `stake()` reverts.
+
+| Contract | Layer | Changes |
+|---|---|---|
+| `contracts/l2/StakingManager.sol` | L2 | `_deployAndStake` re-deploys via `recoveryModule` instead of the de-whitelisted `safeSameAddressMultisig`, and registers the service under its own agent Id rather than the current immutable one; `safeSameAddressMultisig` slot deprecated and `recoveryModule` appended; new owner-only `changeMultisigImplementations`, which requires the implementations to be whitelisted in the service registry |
+
+### Required post-upgrade transaction
+
+Deployed proxies have no `recoveryModule` in storage, and service re-deployment reverts `ZeroAddress`
+until it is set. Immediately after upgrading the implementation, run:
+
+```bash
+./scripts/deployment/script_l2_11_change_multisig_implementations.sh <network>
+```
+
+### Known residue
+
+The 20 services parked on the Gnosis staking pool `0x2da9ae6f…` were created with agent Id 69, while
+the deployed implementation's immutable `agentId` is 85. Reading the agent Id from the service makes
+them re-deployable again. That pool has `availableRewards == 0`, so no yield is affected.

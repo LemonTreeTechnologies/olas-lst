@@ -21,6 +21,39 @@ interface ICollector {
     function rebalanceFromUnstakeReserve(address stakingProxy, uint256 amount, bytes32 operation) external;
 }
 
+// Service registry interface
+interface IServiceRegistry {
+    // Service parameters, mirrors ServiceRegistryL2.Service
+    struct Service {
+        // Registration activation deposit
+        uint96 securityDeposit;
+        // Multisig address for agent instances
+        address multisig;
+        // IPFS hash pointing to the config metadata
+        bytes32 configHash;
+        // Agent instance signers threshold
+        uint32 threshold;
+        // Total number of agent instances
+        uint32 maxNumAgentInstances;
+        // Actual number of agent instances
+        uint32 numAgentInstances;
+        // Service state
+        uint8 state;
+        // Canonical agent Ids for the service
+        uint32[] agentIds;
+    }
+
+    /// @dev Gets the service instance.
+    /// @param serviceId Service Id.
+    /// @return service Corresponding Service struct.
+    function getService(uint256 serviceId) external view returns (Service memory service);
+
+    /// @dev Gets multisig implementation whitelisting status.
+    /// @param multisigImplementation Multisig implementation address.
+    /// @return True, if multisig implementation is whitelisted.
+    function mapMultisigs(address multisigImplementation) external view returns (bool);
+}
+
 // Activity module interface
 interface IActivityModule {
     /// @dev Initializes activity module proxy.
@@ -52,12 +85,19 @@ error Overflow(uint256 provided, uint256 max);
 /// @param account Account address.
 error UnauthorizedAccount(address account);
 
+/// @dev Multisig implementation is not whitelisted in the service registry.
+/// @param multisigImplementation Multisig implementation address.
+error UnauthorizedMultisig(address multisigImplementation);
+
 /// @dev Caught reentrancy violation.
 error ReentrancyGuard();
 
 /// @title StakingManager - Smart contract for OLAS staking management
 contract StakingManager is Implementation, ERC721TokenReceiver {
     event StakingProcessorL2Updated(address indexed l2StakingProcessor);
+    event MultisigImplementationsUpdated(
+        address indexed safeMultisig, address indexed recoveryModule, address indexed fallbackHandler
+    );
     event StakingBalanceUpdated(
         bytes32 indexed operation, address indexed stakingProxy, uint256 numStakes, uint256 balance
     );
@@ -103,8 +143,10 @@ contract StakingManager is Implementation, ERC721TokenReceiver {
 
     // Safe multisig processing contract address
     address public safeMultisig;
-    // Safe same address multisig processing contract address
-    address public safeSameAddressMultisig;
+    // Deprecated slot: previously safeSameAddressMultisig, whose implementation has been de-whitelisted in the
+    // service registry. Kept private to preserve the storage layout of already deployed proxies.
+    // Service re-deployment now goes via recoveryModule, which is whitelisted and preserves the same multisig.
+    address private _deprecatedSafeSameAddressMultisig;
     // Safe fallback handler
     address public fallbackHandler;
     // L2 staking processor address
@@ -123,6 +165,11 @@ contract StakingManager is Implementation, ERC721TokenReceiver {
     mapping(uint256 => address) public mapServiceIdActivityModules;
     // Mapping of staking proxy address => last staked service Id index in mapStakedServiceIds corresponding set
     mapping(address => uint256) public mapLastStakedServiceIdxs;
+
+    // Recovery module contract address, used to re-deploy an existing service with its original multisig.
+    // Appended after the mappings on purpose: this preserves the storage layout of already deployed proxies,
+    // which must set it via changeMultisigImplementations() right after the implementation upgrade.
+    address public recoveryModule;
 
     /// @dev StakingManager constructor.
     /// @param _olas OLAS token address.
@@ -175,22 +222,59 @@ contract StakingManager is Implementation, ERC721TokenReceiver {
 
     /// @dev Initializes staking manager.
     /// @param _safeMultisig Safe multisig contract address.
-    /// @param _safeSameAddressMultisig Safe same address multisig contract address.
+    /// @param _recoveryModule Recovery module contract address.
     /// @param _fallbackHandler Fallback handler for service multisigs.
-    function initialize(address _safeMultisig, address _safeSameAddressMultisig, address _fallbackHandler) external {
+    function initialize(address _safeMultisig, address _recoveryModule, address _fallbackHandler) external {
         if (owner != address(0)) {
             revert AlreadyInitialized();
         }
 
-        if (_safeMultisig == address(0) || _safeSameAddressMultisig == address(0) || _fallbackHandler == address(0)) {
+        if (_safeMultisig == address(0) || _recoveryModule == address(0) || _fallbackHandler == address(0)) {
             revert ZeroAddress();
         }
 
         safeMultisig = _safeMultisig;
-        safeSameAddressMultisig = _safeSameAddressMultisig;
+        recoveryModule = _recoveryModule;
         fallbackHandler = _fallbackHandler;
 
         owner = msg.sender;
+    }
+
+    /// @dev Changes multisig implementation addresses.
+    /// @notice Both multisig implementations must be whitelisted in the service registry at the time of the call,
+    ///         as service deployment reverts otherwise. This function is also the migration path for proxies
+    ///         upgraded from an implementation that had no recoveryModule set.
+    /// @param newSafeMultisig New Safe multisig processing contract address.
+    /// @param newRecoveryModule New recovery module contract address.
+    /// @param newFallbackHandler New Safe fallback handler address.
+    function changeMultisigImplementations(
+        address newSafeMultisig,
+        address newRecoveryModule,
+        address newFallbackHandler
+    ) external {
+        // Check for ownership
+        if (msg.sender != owner) {
+            revert OwnerOnly(msg.sender, owner);
+        }
+
+        // Check for zero addresses
+        if (newSafeMultisig == address(0) || newRecoveryModule == address(0) || newFallbackHandler == address(0)) {
+            revert ZeroAddress();
+        }
+
+        // Check that multisig implementations are whitelisted in the service registry
+        if (!IServiceRegistry(serviceRegistry).mapMultisigs(newSafeMultisig)) {
+            revert UnauthorizedMultisig(newSafeMultisig);
+        }
+        if (!IServiceRegistry(serviceRegistry).mapMultisigs(newRecoveryModule)) {
+            revert UnauthorizedMultisig(newRecoveryModule);
+        }
+
+        safeMultisig = newSafeMultisig;
+        recoveryModule = newRecoveryModule;
+        fallbackHandler = newFallbackHandler;
+
+        emit MultisigImplementationsUpdated(newSafeMultisig, newRecoveryModule, newFallbackHandler);
     }
 
     /// @dev Changes staking processor L2 address.
@@ -305,8 +389,20 @@ contract StakingManager is Implementation, ERC721TokenReceiver {
     /// @param stakingProxy Staking proxy address.
     /// @param serviceId Service Id.
     function _deployAndStake(address stakingProxy, uint256 serviceId) internal {
-        // Get the service multisig
-        (, address multisig,,,,,) = IService(serviceRegistry).mapServices(serviceId);
+        // Get recovery module, which re-deploys the service preserving its original multisig
+        address localRecoveryModule = recoveryModule;
+        // Check for zero address: must be set via changeMultisigImplementations() after an implementation upgrade
+        if (localRecoveryModule == address(0)) {
+            revert ZeroAddress();
+        }
+
+        // Get the service: its multisig is preserved across re-deployments
+        IServiceRegistry.Service memory service = IServiceRegistry(serviceRegistry).getService(serviceId);
+
+        // This must never happen as the service is created by address(this) with exactly one agent Id
+        if (service.agentIds.length == 0) {
+            revert ZeroValue();
+        }
 
         // Activate registration (1 wei as a deposit wrapper)
         IService(serviceManager).activateRegistration{value: 1}(serviceId);
@@ -314,21 +410,22 @@ contract StakingManager is Implementation, ERC721TokenReceiver {
         // Get multisig instances = activityModule
         address[] memory instances = new address[](NUM_AGENT_INSTANCES);
         instances[0] = mapServiceIdActivityModules[serviceId];
-        // Get agent Ids
+        // Re-use the agent Id the service was created with: services created by an earlier implementation might
+        // carry a different agent Id than the current immutable one, and registerAgents() only accepts their own
         uint32[] memory agentIds = new uint32[](NUM_AGENT_INSTANCES);
-        agentIds[0] = uint32(agentId);
+        agentIds[0] = service.agentIds[0];
 
         // Register msg.sender as an agent instance (numAgentInstances wei as a bond wrapper)
         IService(serviceManager).registerAgents{value: NUM_AGENT_INSTANCES}(serviceId, instances, agentIds);
 
-        // Re-deploy the service
-        bytes memory data = abi.encodePacked(multisig);
-        IService(serviceManager).deploy(serviceId, safeSameAddressMultisig, data);
+        // Re-deploy the service via recovery module: it verifies that multisig owners match the registered agent
+        // instances and returns the very same multisig, with no module access needed on that multisig
+        IService(serviceManager).deploy(serviceId, localRecoveryModule, abi.encode(serviceId));
 
         // Stake the service
         _stake(stakingProxy, serviceId, instances[0]);
 
-        emit ReDeployed(serviceId, multisig, instances[0]);
+        emit ReDeployed(serviceId, service.multisig, instances[0]);
     }
 
     /// @dev Stakes OLAS into specified staking proxy contract if deposit + balance is enough for staking.
