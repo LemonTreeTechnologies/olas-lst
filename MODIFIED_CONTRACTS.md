@@ -51,6 +51,39 @@ creation revert `ZeroAddress` until they are set. Immediately after upgrading ea
 ./scripts/deployment/script_l2_12_change_external_multisig_implementations.sh <network>
 ```
 
+## Pending explicit staking access
+
+A zero `stakingGuard` in a staking proxy config used to mean both "deliberately permissionless" and
+"nobody configured a guard yet", and `stake()` treated the ambiguous case as open. Access is now stated
+explicitly with an `openAccess` flag in the config word, `stake()` denies by default, and
+`setStakingProxyConfigs` rejects a config carrying neither or both.
+
+| Contract | Layer | Changes |
+|---|---|---|
+| `contracts/l2/ExternalStakingDistributor.sol` | L2 | `openAccess` flag added at bit 216 of the staking config, with `wrapStakingConfig` / `unwrapStakingConfig` extended; `stake()` grants non-owner access only via the flag or the staking guard curating-agent allowlist; `setStakingProxyConfigs` rejects ambiguous configs with a new `WrongStakingAccess` error; fixed `wrapStakingConfig` truncating the staking guard address |
+
+### Config migration
+
+Existing on-chain configs were written by the previous implementation and carry no `openAccess` flag.
+Guarded proxies (all of Gnosis and Mode) keep working unchanged. The three **Base** proxies with a zero
+staking guard **close** on upgrade and must be re-set with the flag in the same batch:
+
+| Chain | Staking proxy | Collector / protocol / curating |
+|---|---|---|
+| Base | `0x0dfafbf570e9e813507aae18aa08dfba0abc5139` | 500 / 1000 / 8500 |
+| Base | `0x66a92cda5b319dcccac6c1cecbb690ca3fb59488` | 500 / 1000 / 8500 |
+| Base | `0x51c5f4982b9b0b3c0482678f5847ea6228cc8e54` | 500 / 1000 / 8500 |
+
+The exposure window is harmless: creation on Base is blocked until the create-path fix ships anyway, and
+`reStake` keys off `mapServiceIdCuratingAgents`, which this gate does not touch.
+
+### Guard address truncation
+
+`wrapStakingConfig` packed the staking guard as `uint160(stakingGuard) << 56`, which shifts within
+`uint160` and silently drops the top 56 bits of the address. Any config built through that helper carried
+a corrupted staking guard that no account could match, disabling `setCuratingAgents` for that proxy. Live
+configs are unaffected — they were packed off-chain — but the helper is now correct.
+
 ### Known residue
 
 The 20 services parked on the Gnosis staking pool `0x2da9ae6f…` were created with agent Id 69, while

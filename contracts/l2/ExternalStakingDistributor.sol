@@ -116,6 +116,13 @@ error UnsupportedStakingType(uint8 stakingType);
 /// @param multisigImplementation Multisig implementation address.
 error UnauthorizedMultisig(address multisigImplementation);
 
+/// @dev Staking access is ambiguous: a staking proxy must either be governed by a staking guard, or be
+///      explicitly open to any account.
+/// @param stakingProxy Staking proxy address.
+/// @param stakingGuard Staking guard address.
+/// @param openAccess Open access flag.
+error WrongStakingAccess(address stakingProxy, address stakingGuard, bool openAccess);
+
 /// @title ExternalStakingDistributor - Smart contract for distributing OLAS across external staking contracts
 contract ExternalStakingDistributor is Implementation, ERC721TokenReceiver {
     // Staking type enum
@@ -173,6 +180,8 @@ contract ExternalStakingDistributor is Implementation, ERC721TokenReceiver {
     uint256 public constant THRESHOLD = 1;
     // Max reward factor: 10k is enough to handle 0..100.00% with a step of 0.01%
     uint256 public constant MAX_REWARD_FACTOR = 10_000;
+    // Open access flag mask: bit 216 of the staking config, just above the staking guard address
+    uint256 public constant OPEN_ACCESS_MASK = 1 << 216;
 
     // Service manager address
     address public immutable serviceManager;
@@ -483,7 +492,7 @@ contract ExternalStakingDistributor is Implementation, ERC721TokenReceiver {
         uint256 config = mapStakingProxyConfigs[stakingProxy];
 
         // Unwrap config
-        (, uint256 collectorAmount, uint256 protocolAmount,, StakingType stakingType) = unwrapStakingConfig(config);
+        (, uint256 collectorAmount, uint256 protocolAmount,, StakingType stakingType,) = unwrapStakingConfig(config);
 
         // Calculate reward distribution
         collectorAmount = (reward * collectorAmount) / MAX_REWARD_FACTOR;
@@ -588,14 +597,16 @@ contract ExternalStakingDistributor is Implementation, ERC721TokenReceiver {
 
         // If staker is not owner - check for curating agent access
         if (msg.sender != owner) {
-            // Curating agent access is true, if not set otherwise
-            bool curatingAgentAccess = true;
+            // Get staking guard address and open access flag
+            (address stakingGuard,,,,, bool openAccess) = unwrapStakingConfig(config);
 
-            // Get staking guard address
-            (address stakingGuard,,,,) = unwrapStakingConfig(config);
+            // Access is denied unless the proxy is explicitly open, or msg.sender is one of its curating agents.
+            // Note the deny by default: a config carrying neither a staking guard nor the open access flag,
+            // which is what an incomplete config batch produces, closes the proxy rather than opening it
+            bool curatingAgentAccess = openAccess;
 
             // Check for msg.sender access
-            if (stakingGuard != address(0)) {
+            if (!curatingAgentAccess) {
                 // Get staking hash
                 bytes32 stakingHash = keccak256(abi.encode(stakingGuard, stakingProxy));
                 // Check access
@@ -846,8 +857,20 @@ contract ExternalStakingDistributor is Implementation, ERC721TokenReceiver {
             }
 
             // Check proxy configs
-            (, uint256 collectorRewardFactor, uint256 protocolRewardFactor, uint256 curatingAgentRewardFactor,) =
-                unwrapStakingConfig(configs[i]);
+            (
+                address stakingGuard,
+                uint256 collectorRewardFactor,
+                uint256 protocolRewardFactor,
+                uint256 curatingAgentRewardFactor,,
+                bool openAccess
+            ) = unwrapStakingConfig(configs[i]);
+
+            // Staking access must be stated explicitly: either the proxy is governed by a staking guard curating
+            // agent allowlist, or it is open to any account. A config with neither is ambiguous and is the way an
+            // allowlisted proxy silently becomes permissionless; a config with both is contradictory
+            if ((stakingGuard == address(0)) != openAccess) {
+                revert WrongStakingAccess(stakingProxies[i], stakingGuard, openAccess);
+            }
 
             // Check for collector and zero value
             if (collectorRewardFactor == 0) {
@@ -919,7 +942,7 @@ contract ExternalStakingDistributor is Implementation, ERC721TokenReceiver {
         }
 
         // Get staking guard address
-        (address stakingGuard,,,,) = unwrapStakingConfig(config);
+        (address stakingGuard,,,,,) = unwrapStakingConfig(config);
 
         // Check for access: only staking guard
         if (msg.sender != stakingGuard) {
@@ -1064,32 +1087,42 @@ contract ExternalStakingDistributor is Implementation, ERC721TokenReceiver {
         _locked = 1;
     }
 
-    /// @dev Wraps staking proxy config: reward factors and staking type value.
-    /// @param stakingGuard Staking proxy proposer address.
+    /// @dev Wraps staking proxy config: staking access, reward factors and staking type value.
+    /// @param stakingGuard Staking proxy proposer address. Zero address only together with openAccess.
     /// @param collectorRewardFactor Collector reward factor.
     /// @param protocolRewardFactor Protocol reward factor.
     /// @param curatingAgentRewardFactor Curating agent reward factor.
     /// @param stakingType Staking type.
+    /// @param openAccess True if any account may stake into this proxy, false if the staking guard curating
+    ///        agent allowlist governs it.
     function wrapStakingConfig(
         address stakingGuard,
         uint256 collectorRewardFactor,
         uint256 protocolRewardFactor,
         uint256 curatingAgentRewardFactor,
-        StakingType stakingType
+        StakingType stakingType,
+        bool openAccess
     ) public pure returns (uint256 config) {
-        // Staking config: collectorRewardFactor 16 bits | protocolRewardFactor 16 bits
-        //                 | curatingAgentRewardFactor 16 bits | stakingType 8 bits
+        // Staking config: openAccess 1 bit | stakingGuard 160 bits | collectorRewardFactor 16 bits
+        //                 | protocolRewardFactor 16 bits | curatingAgentRewardFactor 16 bits | stakingType 8 bits
+        // Note the uint256 cast of the staking guard: `uint160(stakingGuard) << 56` shifts within uint160 and
+        // silently truncates the top 56 bits of the address
         config = uint8(stakingType) | curatingAgentRewardFactor << 8 | protocolRewardFactor << 24
-            | collectorRewardFactor << 40 | uint160(stakingGuard) << 56;
+            | collectorRewardFactor << 40 | uint256(uint160(stakingGuard)) << 56;
+
+        if (openAccess) {
+            config |= OPEN_ACCESS_MASK;
+        }
     }
 
-    /// @dev Unwraps staking proxy config: reward factors and staking type value.
+    /// @dev Unwraps staking proxy config: staking access, reward factors and staking type value.
     /// @param config Staking proxy config value.
     /// @return stakingGuard Staking proxy proposer address.
     /// @return collectorRewardFactor Collector reward factor.
     /// @return protocolRewardFactor Protocol reward factor.
     /// @return curatingAgentRewardFactor Curating agent reward factor.
     /// @return stakingType Staking type.
+    /// @return openAccess True if any account may stake into this proxy.
     function unwrapStakingConfig(uint256 config)
         public
         pure
@@ -1098,16 +1131,18 @@ contract ExternalStakingDistributor is Implementation, ERC721TokenReceiver {
             uint256 collectorRewardFactor,
             uint256 protocolRewardFactor,
             uint256 curatingAgentRewardFactor,
-            StakingType stakingType
+            StakingType stakingType,
+            bool openAccess
         )
     {
-        // Staking config: stakingGuard 160 bits | collectorRewardFactor 16 bits | protocolRewardFactor 16 bits
-        //                 | curatingAgentRewardFactor 16 bits | stakingType 8 bits
+        // Staking config: openAccess 1 bit | stakingGuard 160 bits | collectorRewardFactor 16 bits
+        //                 | protocolRewardFactor 16 bits | curatingAgentRewardFactor 16 bits | stakingType 8 bits
         stakingGuard = address(uint160(config >> 56));
         collectorRewardFactor = uint16(config >> 40);
         protocolRewardFactor = uint16(config >> 24);
         curatingAgentRewardFactor = uint16(config >> 8);
         stakingType = StakingType(uint8(config));
+        openAccess = (config & OPEN_ACCESS_MASK) != 0;
     }
 
     /// @dev Receives native funds for mock Service Registry minimal payments.
