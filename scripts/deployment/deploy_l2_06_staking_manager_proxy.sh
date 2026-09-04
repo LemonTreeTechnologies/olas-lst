@@ -33,9 +33,9 @@ networkURL=$(jq -r '.networkURL' $globals)
 
 stakingManagerAddress=$(jq -r '.stakingManagerAddress' $globals)
 gnosisSafeMultisigImplementationAddress=$(jq -r '.gnosisSafeMultisigImplementationAddress' $globals)
-gnosisSafeSameAddressMultisigImplementationAddress=$(jq -r '.gnosisSafeSameAddressMultisigImplementationAddress' $globals)
+recoveryModuleAddress=$(jq -r '.recoveryModuleAddress' $globals)
 fallbackHandlerAddress=$(jq -r '.fallbackHandlerAddress' $globals)
-proxyData=$(cast calldata "initialize(address,address,address)" $gnosisSafeMultisigImplementationAddress $gnosisSafeSameAddressMultisigImplementationAddress $fallbackHandlerAddress)
+proxyData=$(cast calldata "initialize(address,address,address)" $gnosisSafeMultisigImplementationAddress $recoveryModuleAddress $fallbackHandlerAddress)
 
 # Check for Polygon keys only since on other networks those are not needed
 if [ $chainId == 137 ]; then

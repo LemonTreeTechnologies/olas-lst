@@ -76,6 +76,9 @@ externalStakingDistributorProxyAddress=$(jq -r ".externalStakingDistributorProxy
 stakingProcessorL2Address=$(jq -r ".${networkL2}StakingProcessorL2Address" $globalsL2)
 serviceManagerProxyAddress=$(jq -r ".serviceManagerProxyAddress" $globalsL2)
 safeMultisigWithRecoveryModuleAddress=$(jq -r ".safeMultisigWithRecoveryModuleAddress" $globalsL2)
+recoveryModuleAddress=$(jq -r ".recoveryModuleAddress" $globalsL2)
+serviceRegistryAddressL2=$(jq -r ".serviceRegistryAddress" $globalsL2)
+gnosisSafeMultisigImplementationAddress=$(jq -r ".gnosisSafeMultisigImplementationAddress" $globalsL2)
 gnosisSafeSameAddressMultisigImplementationAddress=$(jq -r ".gnosisSafeSameAddressMultisigImplementationAddress" $globalsL2)
 fallbackHandlerAddress=$(jq -r ".fallbackHandlerAddress" $globalsL2)
 multiSendCallOnlyAddress=$(jq -r ".multiSendCallOnlyAddress" $globalsL2)
@@ -451,6 +454,34 @@ if [ $result != $collectorProxyAddress ]; then
   echo "${red}!!! Fetched address: $result${reset}"
   echo "${red}!!! Expected address: $collectorProxyAddress${reset}"
 fi
+# SafeMultisig
+castArgs="$stakingManagerProxyAddress safeMultisig()(address)"
+castCmd="$castCallHeader $castArgs"
+result=$($castCmd)
+if [ $result != $gnosisSafeMultisigImplementationAddress ]; then
+  echo "${red}!!! SafeMultisig address is incorrect!${reset}"
+  echo "${red}!!! Fetched address: $result${reset}"
+  echo "${red}!!! Expected address: $gnosisSafeMultisigImplementationAddress${reset}"
+fi
+# RecoveryModule: service re-deployment reverts while this is unset or de-whitelisted
+castArgs="$stakingManagerProxyAddress recoveryModule()(address)"
+castCmd="$castCallHeader $castArgs"
+result=$($castCmd)
+if [ $result != $recoveryModuleAddress ]; then
+  echo "${red}!!! RecoveryModule address is incorrect!${reset}"
+  echo "${red}!!! Fetched address: $result${reset}"
+  echo "${red}!!! Expected address: $recoveryModuleAddress${reset}"
+fi
+# Multisig implementations must be whitelisted in the service registry
+for multisigImplementation in $gnosisSafeMultisigImplementationAddress $recoveryModuleAddress; do
+  castArgs="$serviceRegistryAddressL2 mapMultisigs(address)(bool) $multisigImplementation"
+  castCmd="$castCallHeader $castArgs"
+  result=$($castCmd)
+  if [ "$result" != "true" ]; then
+    echo "${red}!!! Multisig implementation is not whitelisted in ServiceRegistry!${reset}"
+    echo "${red}!!! Implementation: $multisigImplementation${reset}"
+  fi
+done
 # Balance in wei
 castCmd="cast call --rpc-url $networkURLL2 $stakingManagerProxyAddress"
 result=$($castCmd)
