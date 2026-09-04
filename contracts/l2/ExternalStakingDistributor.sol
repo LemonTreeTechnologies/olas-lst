@@ -50,34 +50,6 @@ interface ISafe {
         DelegateCall
     }
 
-    /// @dev Allows to add a module to the whitelist.
-    /// @param module Module to be whitelisted.
-    function enableModule(address module) external;
-
-    /// @dev Allows to execute a Safe transaction confirmed by required number of owners and then pays the account that submitted the transaction.
-    /// @param to Destination address of Safe transaction.
-    /// @param value Ether value of Safe transaction.
-    /// @param data Data payload of Safe transaction.
-    /// @param operation Operation type of Safe transaction.
-    /// @param safeTxGas Gas that should be used for the Safe transaction.
-    /// @param baseGas Gas costs that are independent of the transaction execution(e.g. base transaction fee, signature check, payment of the refund)
-    /// @param gasPrice Gas price that should be used for the payment calculation.
-    /// @param gasToken Token address (or 0 if ETH) that is used for the payment.
-    /// @param refundReceiver Address of receiver of gas payment (or 0 if tx.origin).
-    /// @param signatures Packed signature data ({bytes32 r}{bytes32 s}{uint8 v})
-    function execTransaction(
-        address to,
-        uint256 value,
-        bytes calldata data,
-        Operation operation,
-        uint256 safeTxGas,
-        uint256 baseGas,
-        uint256 gasPrice,
-        address gasToken,
-        address payable refundReceiver,
-        bytes memory signatures
-    ) external payable returns (bool success);
-
     /// @dev Allows a Module to execute a Safe transaction without any further confirmations.
     /// @param to Destination address of module transaction.
     /// @param value Ether value of module transaction.
@@ -86,29 +58,26 @@ interface ISafe {
     function execTransactionFromModule(address to, uint256 value, bytes memory data, Operation operation)
         external
         returns (bool success);
+}
 
-    /// @dev Allows to swap/replace an owner from the Safe with another address.
-    ///      This can only be done via a Safe transaction.
-    /// @notice Replaces the owner `oldOwner` in the Safe with `newOwner`.
-    /// @param prevOwner Owner that pointed to the owner to be replaced in the linked list
-    /// @param oldOwner Owner address to be replaced.
-    /// @param newOwner New owner address.
-    function swapOwner(address prevOwner, address oldOwner, address newOwner) external;
+// Safe setup helper interface
+interface ISafeSetupHelper {
+    /// @dev Enables modules and sets a transaction guard on a Safe being created.
+    /// @param modules Set of modules to enable.
+    /// @param guard Transaction guard address.
+    function setup(address[] memory modules, address guard) external;
+}
 
-    /// @dev Sets guard that checks transactions before and after execution.
-    /// @param guard Guard address.
-    function setGuard(address guard) external;
+// Service registry interface
+interface IServiceRegistry {
+    /// @dev Gets multisig implementation whitelisting status.
+    /// @param multisigImplementation Multisig implementation address.
+    /// @return True, if multisig implementation is whitelisted.
+    function mapMultisigs(address multisigImplementation) external view returns (bool);
 }
 
 // SafeMultisigWithRecoveryModule interface
 interface ISafeMultisigWithRecoveryModule {
-    /// @dev Creates a Safe multisig.
-    /// @param owners Set of multisig owners.
-    /// @param threshold Number of required confirmations for a multisig transaction.
-    /// @param data Encoded data related to the creation of a chosen multisig.
-    /// @return multisig Address of a created multisig.
-    function create(address[] memory owners, uint256 threshold, bytes memory data) external returns (address multisig);
-
     /// @dev Gets recovery module address.
     function recoveryModule() external view returns (address);
 }
@@ -143,6 +112,10 @@ error ExecutionFailed(address target, bytes payload);
 /// @param stakingType Staking type.
 error UnsupportedStakingType(uint8 stakingType);
 
+/// @dev Multisig implementation is not whitelisted in the service registry.
+/// @param multisigImplementation Multisig implementation address.
+error UnauthorizedMultisig(address multisigImplementation);
+
 /// @title ExternalStakingDistributor - Smart contract for distributing OLAS across external staking contracts
 contract ExternalStakingDistributor is Implementation, ERC721TokenReceiver {
     // Staking type enum
@@ -153,6 +126,7 @@ contract ExternalStakingDistributor is Implementation, ERC721TokenReceiver {
 
     event StakingProcessorL2Updated(address indexed l2StakingProcessor);
     event MultisigGuardUpdated(address indexed guard);
+    event MultisigImplementationsUpdated(address indexed safeMultisig, address indexed safeSetupHelper);
     event ExternalServiceStaked(
         address indexed sender,
         address indexed stakingProxy,
@@ -212,8 +186,6 @@ contract ExternalStakingDistributor is Implementation, ERC721TokenReceiver {
     address public immutable safeMultisigWithRecoveryModule;
     // Recovery module contract address
     address public immutable recoveryModule;
-    // Safe same address multisig processing contract address
-    address public immutable safeSameAddressMultisig;
     // Safe fallback handler address
     address public immutable fallbackHandler;
     // Multisend contract address
@@ -251,11 +223,17 @@ contract ExternalStakingDistributor is Implementation, ERC721TokenReceiver {
     // Mapping of (staking guard + staking proxy) hash => whitelisted curating agent addresses
     mapping(bytes32 => mapping(address => bool)) public mapStakingGuardHashCuratingAgents;
 
+    // Safe multisig processing contract address, used to create service multisigs.
+    // Appended after the mappings on purpose: this preserves the storage layout of already deployed proxies,
+    // which must set it via changeMultisigImplementations() right after the implementation upgrade.
+    address public safeMultisig;
+    // Safe setup helper address, delegatecall-ed during service multisig creation to wire modules and the guard
+    address public safeSetupHelper;
+
     /// @dev ExternalStakingDistributor constructor.
     /// @param _olas OLAS token address.
     /// @param _serviceManager Service manager address.
     /// @param _safeMultisigWithRecoveryModule Safe multisig with recovery module processing contract address.
-    /// @param _safeSameAddressMultisig Safe same address multisig processing contract address.
     /// @param _fallbackHandler Safe fallback handler address.
     /// @param _multiSend Multisend contract address.
     /// @param _collector OLAS collector address.
@@ -263,7 +241,6 @@ contract ExternalStakingDistributor is Implementation, ERC721TokenReceiver {
         address _olas,
         address _serviceManager,
         address _safeMultisigWithRecoveryModule,
-        address _safeSameAddressMultisig,
         address _fallbackHandler,
         address _multiSend,
         address _collector
@@ -271,8 +248,7 @@ contract ExternalStakingDistributor is Implementation, ERC721TokenReceiver {
         // Check for zero addresses
         if (
             _olas == address(0) || _serviceManager == address(0) || _safeMultisigWithRecoveryModule == address(0)
-                || _safeSameAddressMultisig == address(0) || _fallbackHandler == address(0) || _multiSend == address(0)
-                || _collector == address(0)
+                || _fallbackHandler == address(0) || _multiSend == address(0) || _collector == address(0)
         ) {
             revert ZeroAddress();
         }
@@ -280,7 +256,6 @@ contract ExternalStakingDistributor is Implementation, ERC721TokenReceiver {
         olas = _olas;
         serviceManager = _serviceManager;
         safeMultisigWithRecoveryModule = _safeMultisigWithRecoveryModule;
-        safeSameAddressMultisig = _safeSameAddressMultisig;
         fallbackHandler = _fallbackHandler;
         multiSend = _multiSend;
         collector = _collector;
@@ -290,12 +265,50 @@ contract ExternalStakingDistributor is Implementation, ERC721TokenReceiver {
     }
 
     /// @dev Initializes external staking distributor.
-    function initialize() external {
+    /// @param _safeMultisig Safe multisig processing contract address.
+    /// @param _safeSetupHelper Safe setup helper address.
+    function initialize(address _safeMultisig, address _safeSetupHelper) external {
         if (owner != address(0)) {
             revert AlreadyInitialized();
         }
 
+        // Check for zero addresses
+        if (_safeMultisig == address(0) || _safeSetupHelper == address(0)) {
+            revert ZeroAddress();
+        }
+
+        safeMultisig = _safeMultisig;
+        safeSetupHelper = _safeSetupHelper;
+
         owner = msg.sender;
+    }
+
+    /// @dev Changes Safe multisig implementation and setup helper addresses.
+    /// @notice The multisig implementation must be whitelisted in the service registry at the time of the call,
+    ///         as service deployment reverts otherwise. This function is also the migration path for proxies
+    ///         upgraded from an implementation that had no such slots.
+    /// @param newSafeMultisig New Safe multisig processing contract address.
+    /// @param newSafeSetupHelper New Safe setup helper address.
+    function changeMultisigImplementations(address newSafeMultisig, address newSafeSetupHelper) external {
+        // Check for ownership
+        if (msg.sender != owner) {
+            revert OwnerOnly(msg.sender, owner);
+        }
+
+        // Check for zero addresses
+        if (newSafeMultisig == address(0) || newSafeSetupHelper == address(0)) {
+            revert ZeroAddress();
+        }
+
+        // Check that multisig implementation is whitelisted in the service registry
+        if (!IServiceRegistry(serviceRegistry).mapMultisigs(newSafeMultisig)) {
+            revert UnauthorizedMultisig(newSafeMultisig);
+        }
+
+        safeMultisig = newSafeMultisig;
+        safeSetupHelper = newSafeSetupHelper;
+
+        emit MultisigImplementationsUpdated(newSafeMultisig, newSafeSetupHelper);
     }
 
     /// @dev Changes staking processor L2 address.
@@ -332,72 +345,37 @@ contract ExternalStakingDistributor is Implementation, ERC721TokenReceiver {
         emit MultisigGuardUpdated(newGuard);
     }
 
-    /// @dev Creates multisig and enables address(this) as module.
-    /// @param agentInstance Agent instance address.
-    /// @return multisig Created multisig address.
-    function _createMultisigWithSelfAsModule(address agentInstance) internal returns (address multisig) {
-        // Prepare Safe multisig data
+    /// @dev Builds Safe multisig creation data for the service registry.
+    /// @notice The service registry creates the multisig owned by the service agent instances, so no protocol
+    ///         contract is ever an owner and none can enable a module on it afterwards. Everything the protocol
+    ///         needs on that multisig is therefore wired in the Safe `setup()` delegatecall to safeSetupHelper:
+    ///         address(this) as a module for reward distribution, the guard both as a module and as the
+    ///         transaction guard, and the recovery module, without which the service could never be unstaked
+    ///         and re-deployed later.
+    /// @param localGuard Multisig guard address.
+    /// @return data Packed Safe multisig creation data.
+    function _getMultisigCreationData(address localGuard) internal returns (bytes memory data) {
+        // Prepare Safe multisig nonce
         uint256 localNonce = _nonce;
         uint256 randomNonce = uint256(keccak256(abi.encodePacked(block.timestamp, msg.sender, localNonce)));
-        bytes memory data = abi.encode(fallbackHandler, randomNonce);
 
         // Update global nonce
         _nonce = localNonce + 1;
 
-        // Create Safe with self as owner
-        address[] memory owners = new address[](1);
-        owners[0] = address(this);
-        multisig = ISafeMultisigWithRecoveryModule(safeMultisigWithRecoveryModule).create(owners, THRESHOLD, data);
+        // Modules to enable on a created multisig
+        address[] memory modules = new address[](3);
+        modules[0] = recoveryModule;
+        modules[1] = address(this);
+        modules[2] = localGuard;
 
-        // Encode enable module (external staking distributor) function call
-        data = abi.encodeCall(ISafe.enableModule, (address(this)));
-        // MultiSend payload with the packed data of (operation, multisig address, value(0), payload length, payload)
-        bytes memory msPayload = abi.encodePacked(ISafe.Operation.Call, multisig, uint256(0), data.length, data);
+        // Safe setup delegatecall payload
+        bytes memory payload = abi.encodeCall(ISafeSetupHelper.setup, (modules, localGuard));
 
-        // Encode enable module (guard) function call
-        data = abi.encodeCall(ISafe.enableModule, (guard));
-        // MultiSend payload with the packed data of (operation, multisig address, value(0), payload length, payload)
-        msPayload =
-            bytes.concat(msPayload, abi.encodePacked(ISafe.Operation.Call, multisig, uint256(0), data.length, data));
-
-        // Encode set guard function call
-        data = abi.encodeCall(ISafe.setGuard, (guard));
-        // MultiSend payload with the packed data of (operation, multisig address, value(0), payload length, payload)
-        msPayload =
-            bytes.concat(msPayload, abi.encodePacked(ISafe.Operation.Call, multisig, uint256(0), data.length, data));
-
-        // Encode swap owner function call
-        data = abi.encodeCall(ISafe.swapOwner, (address(0x1), address(this), agentInstance));
-        // Concatenate multi send payload with the packed data of (operation, multisig address, value(0), payload length, payload)
-        msPayload =
-            bytes.concat(msPayload, abi.encodePacked(ISafe.Operation.Call, multisig, uint256(0), data.length, data));
-
-        // Multisend call to execute all the payloads
-        msPayload = abi.encodeCall(IMultiSend.multiSend, (msPayload));
-
-        // Construct signature for contract execution
-        bytes32 r = bytes32(uint256(uint160(address(this))));
-        bytes memory signature = abi.encodePacked(r, bytes32(0), uint8(1));
-
-        // Execute multisig transaction
-        bool success = ISafe(multisig)
-            .execTransaction(
-                multiSend,
-                0,
-                msPayload,
-                ISafe.Operation.DelegateCall,
-                0,
-                0,
-                0,
-                address(0),
-                payable(address(0)),
-                signature
-            );
-
-        // Check for success
-        if (!success) {
-            revert ExecutionFailed(multiSend, msPayload);
-        }
+        // Packed Safe multisig creation data:
+        // to | fallbackHandler | paymentToken | paymentReceiver | payment | nonce | payload
+        data = abi.encodePacked(
+            safeSetupHelper, fallbackHandler, address(0), address(0), uint256(0), randomNonce, payload
+        );
     }
 
     /// @dev Creates and / or (re-)deploys service and stakes it.
@@ -447,14 +425,28 @@ contract ExternalStakingDistributor is Implementation, ERC721TokenReceiver {
 
         address multisig;
         if (createService) {
-            // Create multisig with address(this) as module and swap owners to agentInstance
-            multisig = _createMultisigWithSelfAsModule(agentInstance);
+            // Get multisig guard
+            address localGuard = guard;
+            // Check for zero address: the guard is a module and the transaction guard of every service multisig
+            if (localGuard == address(0)) {
+                revert ZeroAddress();
+            }
 
-            // Link mutlsig and service Id
+            // Get Safe multisig implementation
+            address localSafeMultisig = safeMultisig;
+            // Check for zero address: must be set via changeMultisigImplementations() after an upgrade
+            if (localSafeMultisig == address(0) || safeSetupHelper == address(0)) {
+                revert ZeroAddress();
+            }
+
+            // Deploy service: the service registry creates a multisig owned by the registered agent instances,
+            // wired with the required modules and guard by the Safe setup delegatecall
+            multisig =
+                IService(serviceManager).deploy(serviceId, localSafeMultisig, _getMultisigCreationData(localGuard));
+
+            // Link multisig and service Id before any guarded multisig transaction can happen, as the guard
+            // rejects transactions of a multisig it cannot resolve to a service Id
             mapMultisigServiceIds[multisig] = serviceId;
-
-            // Deploy service via same address multisig
-            IService(serviceManager).deploy(serviceId, safeSameAddressMultisig, abi.encodePacked(multisig));
         } else {
             // Re-deploy service via recovery module
             multisig = IService(serviceManager).deploy(serviceId, recoveryModule, abi.encode(serviceId));
@@ -801,10 +793,8 @@ contract ExternalStakingDistributor is Implementation, ERC721TokenReceiver {
         }
 
         // Check for access: service curating agent, managing agent, or owner
-        if (
-            !(mapServiceIdCuratingAgents[serviceId] == msg.sender || mapManagingAgents[msg.sender]
-                || msg.sender == owner)
-        ) {
+        if (!(mapServiceIdCuratingAgents[serviceId] == msg.sender || mapManagingAgents[msg.sender]
+                    || msg.sender == owner)) {
             revert UnauthorizedAccount(msg.sender);
         }
 

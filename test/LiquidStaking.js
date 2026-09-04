@@ -16,6 +16,7 @@ describe("Liquid Staking", function () {
     let gnosisSafeL2;
     let gnosisSafeProxyFactory;
     let safeModuleInitializer;
+    let safeSetupHelper;
     let fallbackHandler;
     let multiSend;
     let gnosisSafeMultisig;
@@ -144,6 +145,10 @@ describe("Liquid Staking", function () {
         const SafeToL2Setup = await ethers.getContractFactory("SafeToL2Setup");
         safeModuleInitializer = await SafeToL2Setup.deploy();
         await safeModuleInitializer.deployed();
+
+        const SafeSetupHelper = await ethers.getContractFactory("SafeSetupHelper");
+        safeSetupHelper = await SafeSetupHelper.deploy();
+        await safeSetupHelper.deployed();
 
         const FallbackHandler = await ethers.getContractFactory("DefaultCallbackHandler");
         fallbackHandler = await FallbackHandler.deploy();
@@ -303,13 +308,13 @@ describe("Liquid Staking", function () {
 
         const ExternalStakingDistributor = await ethers.getContractFactory("ExternalStakingDistributor");
         externalStakingDistributor = await ExternalStakingDistributor.deploy(olas.address, serviceManager.address,
-            safeMultisigWithRecoveryModule.address, gnosisSafeSameAddressMultisig.address, fallbackHandler.address,
-            multiSend.address, collector.address);
+            safeMultisigWithRecoveryModule.address, fallbackHandler.address, multiSend.address, collector.address);
         await externalStakingDistributor.deployed();
 
         // Initialize externalStakingDistributor
         const ExternalStakingDistributorProxy = await ethers.getContractFactory("Proxy");
-        initPayload = externalStakingDistributor.interface.encodeFunctionData("initialize", []);
+        initPayload = externalStakingDistributor.interface.encodeFunctionData("initialize",
+            [gnosisSafeMultisig.address, safeSetupHelper.address]);
         const externalStakingDistributorProxy = await ExternalStakingDistributorProxy.deploy(externalStakingDistributor.address, initPayload);
         await externalStakingDistributorProxy.deployed();
         externalStakingDistributor = await ethers.getContractAt("ExternalStakingDistributor", externalStakingDistributorProxy.address);
@@ -402,10 +407,12 @@ describe("Liquid Staking", function () {
         await serviceRegistry.changeManager(serviceManager.address);
         await serviceRegistryTokenUtility.changeManager(serviceManager.address);
 
-        // Whitelist gnosis multisig implementations
+        // Whitelist gnosis multisig implementations.
+        // Note gnosisSafeSameAddressMultisig is deliberately NOT whitelisted: its implementation has been
+        // de-whitelisted in the live service registries on every chain, and nothing may depend on it.
         await serviceRegistry.changeMultisigPermission(gnosisSafeMultisig.address, true);
-        await serviceRegistry.changeMultisigPermission(gnosisSafeSameAddressMultisig.address, true);
         await serviceRegistry.changeMultisigPermission(recoveryModule.address, true);
+        await serviceRegistry.changeMultisigPermission(safeMultisigWithRecoveryModule.address, true);
 
         // Fund staking contract
         await olas.approve(stakingTokenAddress, stakingSupply);
