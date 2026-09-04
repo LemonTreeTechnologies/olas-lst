@@ -121,3 +121,24 @@ configs are unaffected — they were packed off-chain — but the helper is now 
 The 20 services parked on the Gnosis staking pool `0x2da9ae6f…` were created with agent Id 69, while
 the deployed implementation's immutable `agentId` is 85. Reading the agent Id from the service makes
 them re-deployable again. That pool has `availableRewards == 0`, so no yield is affected.
+
+## Pending MultisigGuard fixes
+
+| Contract | Layer | Changes |
+|---|---|---|
+| `contracts/l2/MultisigGuard.sol` | L2 | `checkAfterExecution` releases the reentrancy lock before returning on an unsuccessful transaction; `checkTransaction` records the service multisig staking token balance and `checkAfterExecution` requires it not to have decreased; new `stakingToken` constructor parameter and `StakingTokenWithdrawn` error |
+
+### Shared reentrancy lock
+
+`checkAfterExecution` took the lock and returned early on `success == false` without releasing it. The
+guard is a **single proxy shared by every service multisig on the chain**, so one failed Safe transaction
+locked all of them out of owner transactions permanently, stopping liveness and therefore rewards. Safe
+reaches that path whenever `safeTxGas` or `gasPrice` is non-zero, which the multisig owner controls.
+
+### Staking token balance
+
+Addresses I-1 from `audits/audit11`. A service multisig owner could move out any staking token sitting on
+the Safe through a guard-checked `execTransaction`. Safe does not route module transactions past a guard,
+so this constrains owner transactions only and never the distributor settling rewards.
+
+Deployment note: `MultisigGuard` now takes the staking token address as a third constructor argument.
