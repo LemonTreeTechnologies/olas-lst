@@ -59,9 +59,12 @@ castSendHeader="cast send --rpc-url $networkURL$API_KEY $walletArgs"
 REWARD="0x0b9821ae606ebc7c79bf3390bdd3dc93e1b4a7cda27aad60646e7b88ff55b001"
 UNSTAKE="0x8ca9a95e41b5eece253c93f5b31eed1253aed6b145d8a6e14d913fdf8e732293"
 UNSTAKE_RETIRED="0x9065ad15d9673159e4597c86084aff8052550cec93c5a6e44b3f1dba4c8731b3"
+# External staking rewards are already split by the ExternalStakingDistributor, so they relay to the same L1
+# Distributor through a bucket the Collector protocol factor never touches
+EXTERNAL_REWARD="0xbe8fd53e4fd96c2b60bda3ce4ca9231d70aa14ec83b41918f888fb8b9f74363a"
 
 echo "${green}Set operation receivers in Collector${reset}"
-castArgs="$collectorProxyAddress setOperationReceivers(bytes32[],address[]) [$REWARD,$UNSTAKE,$UNSTAKE_RETIRED] [$distributorProxyAddress,$treasuryProxyAddress,$unstakeRelayerProxyAddress]"
+castArgs="$collectorProxyAddress setOperationReceivers(bytes32[],address[]) [$REWARD,$UNSTAKE,$UNSTAKE_RETIRED,$EXTERNAL_REWARD] [$distributorProxyAddress,$treasuryProxyAddress,$unstakeRelayerProxyAddress,$distributorProxyAddress]"
 echo $castArgs
 castCmd="$castSendHeader $castArgs"
 result=$($castCmd)

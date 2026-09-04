@@ -171,8 +171,12 @@ contract ExternalStakingDistributor is Implementation, ERC721TokenReceiver {
 
     // Staking Manager version
     string public constant VERSION = "0.1.0";
-    // Reward transfer operation
-    bytes32 public constant REWARD = 0x0b9821ae606ebc7c79bf3390bdd3dc93e1b4a7cda27aad60646e7b88ff55b001;
+    // External staking reward transfer operation, keccak256("EXTERNAL_REWARD").
+    // External rewards are already split here per the staking proxy config, so they go to a Collector bucket of
+    // their own rather than the shared REWARD one. The Collector applies its protocol factor to REWARD only, and
+    // routing external rewards there would cut them a second time on top of the protocolRewardFactor taken below.
+    // The Collector receiver for this operation is the same L1 Distributor as for REWARD.
+    bytes32 public constant EXTERNAL_REWARD = 0xbe8fd53e4fd96c2b60bda3ce4ca9231d70aa14ec83b41918f888fb8b9f74363a;
 
     // Number of agent instances
     uint256 public constant NUM_AGENT_INSTANCES = 1;
@@ -509,8 +513,8 @@ contract ExternalStakingDistributor is Implementation, ERC721TokenReceiver {
             // MultiSend payload with the packed data of (operation, multisig address, value(0), payload length, payload)
             bytes memory msPayload = abi.encodePacked(ISafe.Operation.Call, olas, uint256(0), data.length, data);
 
-            // Encode collector top-up function call for REWARD operation
-            data = abi.encodeCall(ICollector.topUpBalance, (collectorAmount, REWARD));
+            // Encode collector top-up function call for EXTERNAL_REWARD operation
+            data = abi.encodeCall(ICollector.topUpBalance, (collectorAmount, EXTERNAL_REWARD));
             // Concatenate multi send payload with the packed data of (operation, multisig address, value(0), payload length, payload)
             msPayload = bytes.concat(
                 msPayload, abi.encodePacked(ISafe.Operation.Call, collector, uint256(0), data.length, data)
@@ -552,8 +556,8 @@ contract ExternalStakingDistributor is Implementation, ERC721TokenReceiver {
 
             // Approve olas for collector
             IToken(olas).approve(collector, fullCollectorAmount);
-            // Collector top-up function call for REWARD operation
-            ICollector(collector).topUpBalance(collectorAmount, REWARD);
+            // Collector top-up function call for EXTERNAL_REWARD operation
+            ICollector(collector).topUpBalance(collectorAmount, EXTERNAL_REWARD);
 
             // Check for protocol amount
             if (protocolAmount > 0) {

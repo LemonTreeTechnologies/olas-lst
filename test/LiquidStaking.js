@@ -95,6 +95,7 @@ describe("Liquid Staking", function () {
     const stakingSupply = fullStakeDeposit.mul(ethers.BigNumber.from(maxNumServices));
     const bridgePayload = "0x";
     const rewardOperation = "0x0b9821ae606ebc7c79bf3390bdd3dc93e1b4a7cda27aad60646e7b88ff55b001";
+    const externalRewardOperation = "0xbe8fd53e4fd96c2b60bda3ce4ca9231d70aa14ec83b41918f888fb8b9f74363a";
     const unstakeOperation = "0x8ca9a95e41b5eece253c93f5b31eed1253aed6b145d8a6e14d913fdf8e732293";
     const unstakeRetiredOperation = "0x9065ad15d9673159e4597c86084aff8052550cec93c5a6e44b3f1dba4c8731b3";
 
@@ -423,8 +424,10 @@ describe("Liquid Staking", function () {
             [maxNumServices]);
 
         // Set operation receivers
-        await collector.setOperationReceivers([rewardOperation, unstakeOperation, unstakeRetiredOperation],
-            [distributor.address, treasury.address, unstakeRelayer.address]);
+        // External staking rewards relay to the same L1 Distributor, in a bucket the protocol factor never touches
+        await collector.setOperationReceivers([rewardOperation, unstakeOperation, unstakeRetiredOperation,
+            externalRewardOperation],
+        [distributor.address, treasury.address, unstakeRelayer.address, distributor.address]);
     });
 
     context("Staking", function () {
@@ -1892,9 +1895,10 @@ describe("Liquid Staking", function () {
             console.log("Collector balance:", collectorBalance);
             expect(collectorBalance).to.not.eq(0);
 
-            // Relay rewards to L1
+            // Relay rewards to L1. External staking rewards are already split by the distributor, so they sit
+            // in their own bucket that the Collector protocol factor never touches
             console.log("Calling relay rewards tokens to L1 by agent or manually");
-            await collector.relayTokens(rewardOperation, bridgePayload);
+            await collector.relayTokens(externalRewardOperation, bridgePayload);
 
             console.log("\nL1");
             let distributorBalance = await olas.balanceOf(distributor.address);
@@ -1967,7 +1971,7 @@ describe("Liquid Staking", function () {
 
             // Relay rewards and unstake request to L1
             console.log("Calling relay rewards tokens to L1 by agent or manually");
-            await collector.relayTokens(rewardOperation, bridgePayload);
+            await collector.relayTokens(externalRewardOperation, bridgePayload);
             await collector.relayTokens(unstakeOperation, bridgePayload);
 
             console.log("\nL1");

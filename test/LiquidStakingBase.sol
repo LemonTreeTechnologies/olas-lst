@@ -128,6 +128,8 @@ abstract contract LiquidStakingBase is Test {
 
     // Bridge operations
     bytes32 public constant REWARD_OPERATION = 0x0b9821ae606ebc7c79bf3390bdd3dc93e1b4a7cda27aad60646e7b88ff55b001;
+    bytes32 public constant EXTERNAL_REWARD_OPERATION =
+        0xbe8fd53e4fd96c2b60bda3ce4ca9231d70aa14ec83b41918f888fb8b9f74363a;
     bytes32 public constant UNSTAKE_OPERATION = 0x8ca9a95e41b5eece253c93f5b31eed1253aed6b145d8a6e14d913fdf8e732293;
     bytes32 public constant UNSTAKE_RETIRED_OPERATION =
         0x9065ad15d9673159e4597c86084aff8052550cec93c5a6e44b3f1dba4c8731b3;
@@ -393,14 +395,17 @@ abstract contract LiquidStakingBase is Test {
         depository.createAndActivateStakingModels(chainIds, stakingTokenAddresses, fullStakeDeposits, maxNumServices);
 
         // Set operation receivers
-        bytes32[] memory operations = new bytes32[](3);
+        bytes32[] memory operations = new bytes32[](4);
         operations[0] = REWARD_OPERATION;
         operations[1] = UNSTAKE_OPERATION;
         operations[2] = UNSTAKE_RETIRED_OPERATION;
-        address[] memory receivers = new address[](3);
+        // External staking rewards relay to the same L1 Distributor, in a bucket the protocol factor never touches
+        operations[3] = EXTERNAL_REWARD_OPERATION;
+        address[] memory receivers = new address[](4);
         receivers[0] = address(distributor);
         receivers[1] = address(treasury);
         receivers[2] = address(unstakeRelayer);
+        receivers[3] = address(distributor);
         Collector(collector).setOperationReceivers(operations, receivers);
     }
 

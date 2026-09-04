@@ -77,6 +77,38 @@ staking guard **close** on upgrade and must be re-set with the flag in the same 
 The exposure window is harmless: creation on Base is blocked until the create-path fix ships anyway, and
 `reStake` keys off `mapServiceIdCuratingAgents`, which this gate does not touch.
 
+## Pending external reward bucket separation
+
+`_distributeRewards` splits an external reward per the staking proxy config and used to send the
+collector share to the shared `REWARD` bucket, where `Collector.relayTokens` applied its global
+`protocolFactor` to it a second time. Internal and external rewards shared one bucket and one factor,
+so neither could be exempted from the other.
+
+| Contract | Layer | Changes |
+|---|---|---|
+| `contracts/l2/ExternalStakingDistributor.sol` | L2 | `_distributeRewards` tops up the new `EXTERNAL_REWARD` operation instead of `REWARD`, for both V1 and V2 staking types; the now unused `REWARD` constant removed |
+
+**`Collector` is deliberately unchanged and does not need re-deployment.** `relayTokens` already applies
+`protocolFactor` to the `REWARD` operation only, so routing external rewards to a different operation is
+the whole fix.
+
+### Required configuration
+
+`EXTERNAL_REWARD` (`keccak256("EXTERNAL_REWARD")` =
+`0xbe8fd53e4fd96c2b60bda3ce4ca9231d70aa14ec83b41918f888fb8b9f74363a`) must be registered on the Collector
+with the **same L1 `Distributor`** receiver as `REWARD`, otherwise `topUpBalance` reverts `ZeroAddress`
+and external reward distribution fails. Run before the distributor upgrade:
+
+```bash
+./scripts/deployment/script_l2_03_set_operation_receivers_collector.sh <network>
+```
+
+Off-chain agents relaying external staking rewards must switch to the new operation as well: the `REWARD`
+bucket no longer receives them.
+
+Note `Collector.protocolFactor` is `0` on Gnosis and Base today, so the double cut is latent rather than
+active; nothing has been mis-split in production.
+
 ### Guard address truncation
 
 `wrapStakingConfig` packed the staking guard as `uint160(stakingGuard) << 56`, which shifts within
