@@ -3,7 +3,7 @@
 # Check if $1 is provided
 if [ -z "$1" ]; then
   echo "Usage: $0 <network>"
-  echo "Example: $0 base_mainnet"
+  echo "Example: $0 eth_mainnet"
   exit 1
 fi
 
@@ -24,20 +24,13 @@ if [ ! -f $globals ]; then
   exit 0
 fi
 
+contractName="SafeSetupHelper"
 # Read variables using jq
 contractVerification=$(jq -r '.contractVerification' $globals)
 useLedger=$(jq -r '.useLedger' $globals)
 derivationPath=$(jq -r '.derivationPath' $globals)
 chainId=$(jq -r '.chainId' $globals)
 networkURL=$(jq -r '.networkURL' $globals)
-
-olasAddress=$(jq -r '.olasAddress' $globals)
-serviceManagerProxyAddress=$(jq -r '.serviceManagerProxyAddress' $globals)
-safeMultisigWithRecoveryModuleAddress=$(jq -r '.safeMultisigWithRecoveryModuleAddress' $globals)
-fallbackHandlerAddress=$(jq -r '.fallbackHandlerAddress' $globals)
-multiSendCallOnlyAddress=$(jq -r '.multiSendCallOnlyAddress' $globals)
-collectorProxyAddress=$(jq -r '.collectorProxyAddress' $globals)
-
 
 # Check for Polygon keys only since on other networks those are not needed
 if [ $chainId == 137 ]; then
@@ -54,10 +47,8 @@ elif [ $chainId == 80002 ]; then
     fi
 fi
 
-contractName="ExternalStakingDistributor"
 contractPath="contracts/l2/$contractName.sol:$contractName"
-constructorArgs="$olasAddress $serviceManagerProxyAddress $safeMultisigWithRecoveryModuleAddress $fallbackHandlerAddress $multiSendCallOnlyAddress $collectorProxyAddress"
-contractArgs="$contractPath --constructor-args $constructorArgs"
+contractArgs="$contractPath"
 
 # Get deployer based on the ledger flag
 if [ "$useLedger" == "true" ]; then
@@ -77,10 +68,10 @@ echo "${green}Deployment of: $contractArgs${reset}"
 # Deploy the contract and capture the address
 execCmd="forge create --broadcast --rpc-url $networkURL$API_KEY $walletArgs $contractArgs"
 deploymentOutput=$($execCmd)
-externalStakingDistributorAddress=$(echo "$deploymentOutput" | grep 'Deployed to:' | awk '{print $3}')
+safeSetupHelperAddress=$(echo "$deploymentOutput" | grep 'Deployed to:' | awk '{print $3}')
 
 # Get output length
-outputLength=${#externalStakingDistributorAddress}
+outputLength=${#safeSetupHelperAddress}
 
 # Check for the deployed address
 if [ $outputLength != 42 ]; then
@@ -90,11 +81,11 @@ fi
 
 
 # Write new deployed contract back into deployment file
-echo "$(jq '. += {"externalStakingDistributorAddress":"'$externalStakingDistributorAddress'"}' $globals)" > $globals
+echo "$(jq '. += {"safeSetupHelperAddress":"'$safeSetupHelperAddress'"}' $globals)" > $globals
 
 # Verify contract
 if [ "$contractVerification" == "true" ]; then
-  contractParams="$externalStakingDistributorAddress $contractPath --constructor-args $(cast abi-encode "constructor(address,address,address,address,address,address)" $constructorArgs)"
+  contractParams="$safeSetupHelperAddress $contractPath"
   echo "Verification contract params: $contractParams"
 
   echo "${green}Verifying contract on Etherscan...${reset}"
@@ -107,4 +98,4 @@ if [ "$contractVerification" == "true" ]; then
   fi
 fi
 
-echo "${green}$contractName deployed at: $externalStakingDistributorAddress${reset}"
+echo "${green}Contract deployed at: $safeSetupHelperAddress${reset}"

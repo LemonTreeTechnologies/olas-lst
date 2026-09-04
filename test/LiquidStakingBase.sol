@@ -37,6 +37,7 @@ import {GnosisDepositProcessorL1} from "../contracts/l1/bridging/GnosisDepositPr
 import {Collector} from "../contracts/l2/Collector.sol";
 import {ActivityModule} from "../contracts/l2/ActivityModule.sol";
 import {StakingManager} from "../contracts/l2/StakingManager.sol";
+import {SafeSetupHelper} from "../contracts/l2/SafeSetupHelper.sol";
 import {ExternalStakingDistributor} from "../contracts/l2/ExternalStakingDistributor.sol";
 import {MultisigGuard} from "../contracts/l2/MultisigGuard.sol";
 import {ModuleActivityChecker} from "../contracts/l2/ModuleActivityChecker.sol";
@@ -64,6 +65,7 @@ abstract contract LiquidStakingBase is Test {
     DefaultCallbackHandler internal fallbackHandler;
     MultiSendCallOnly internal multiSend;
     SafeToL2Setup internal safeModuleInitializer;
+    SafeSetupHelper internal safeSetupHelper;
 
     GnosisSafeMultisig internal gnosisSafeMultisig;
     GnosisSafeSameAddressMultisig internal gnosisSafeSameAddressMultisig;
@@ -265,16 +267,21 @@ abstract contract LiquidStakingBase is Test {
         // Fund staking manager with native to support staking creation
         vm.deal(address(stakingManager), 1 ether);
 
+        safeSetupHelper = new SafeSetupHelper();
+
         ExternalStakingDistributor externalStakingDistributorImplementation = new ExternalStakingDistributor(
             address(olas),
             address(serviceManager),
             address(safeMultisigWithRecoveryModule),
-            address(gnosisSafeSameAddressMultisig),
             address(fallbackHandler),
             address(multiSend),
             address(collector)
         );
-        initPayload = abi.encodeWithSelector(externalStakingDistributorImplementation.initialize.selector);
+        initPayload = abi.encodeWithSelector(
+            externalStakingDistributorImplementation.initialize.selector,
+            address(gnosisSafeMultisig),
+            address(safeSetupHelper)
+        );
         Proxy externalStakingDistributorProxy =
             new Proxy(address(externalStakingDistributorImplementation), initPayload);
         externalStakingDistributor = ExternalStakingDistributor(payable(address(externalStakingDistributorProxy)));
@@ -366,10 +373,9 @@ abstract contract LiquidStakingBase is Test {
         stakingTokenInstance = StakingTokenLocked(stakingTokenAddress);
 
         // Whitelist multisig implementations.
-        // gnosisSafeSameAddressMultisig is whitelisted here to mirror the registry state the protocol was
-        // deployed against; tests covering its de-whitelisting revoke it explicitly in their own setUp.
+        // Note gnosisSafeSameAddressMultisig is deliberately NOT whitelisted: its implementation has been
+        // de-whitelisted in the live service registries on every chain, and nothing may depend on it.
         serviceRegistry.changeMultisigPermission(address(gnosisSafeMultisig), true);
-        serviceRegistry.changeMultisigPermission(address(gnosisSafeSameAddressMultisig), true);
         serviceRegistry.changeMultisigPermission(address(recoveryModule), true);
         serviceRegistry.changeMultisigPermission(address(safeMultisigWithRecoveryModule), true);
 

@@ -32,14 +32,23 @@ by `StakingManager.unstake` sit in `PreRegistration` and the next `stake()` reve
 | Contract | Layer | Changes |
 |---|---|---|
 | `contracts/l2/StakingManager.sol` | L2 | `_deployAndStake` re-deploys via `recoveryModule` instead of the de-whitelisted `safeSameAddressMultisig`, and registers the service under its own agent Id rather than the current immutable one; `safeSameAddressMultisig` slot deprecated and `recoveryModule` appended; new owner-only `changeMultisigImplementations`, which requires the implementations to be whitelisted in the service registry |
+| `contracts/l2/ExternalStakingDistributor.sol` | L2 | Service creation deploys through the whitelisted `safeMultisig` with `safeSetupHelper` as the Safe `setup()` delegatecall target, replacing the pre-create plus `safeSameAddressMultisig` registration; `_createMultisigWithSelfAsModule` removed entirely, so the distributor is never a multisig owner; `safeSameAddressMultisig` immutable dropped, `safeMultisig` and `safeSetupHelper` appended as storage; `initialize` takes both, and a new owner-only `changeMultisigImplementations` sets them |
 
-### Required post-upgrade transaction
+### New contract
 
-Deployed proxies have no `recoveryModule` in storage, and service re-deployment reverts `ZeroAddress`
-until it is set. Immediately after upgrading the implementation, run:
+| Contract | Layer | Purpose |
+|---|---|---|
+| `contracts/l2/SafeSetupHelper.sol` | L2 | Delegatecall target for Safe `setup()`, enabling the recovery module, the distributor and the guard as modules and setting the transaction guard. Required because the service registry creates service multisigs owned by the agent instances, so no protocol contract can wire them afterwards. Deploy once per chain. |
+
+### Required post-upgrade transactions
+
+Deployed proxies have none of the appended slots in storage, and both service re-deployment and service
+creation revert `ZeroAddress` until they are set. Immediately after upgrading each implementation, run:
 
 ```bash
+./scripts/deployment/deploy_l2_17_safe_setup_helper.sh <network>
 ./scripts/deployment/script_l2_11_change_multisig_implementations.sh <network>
+./scripts/deployment/script_l2_12_change_external_multisig_implementations.sh <network>
 ```
 
 ### Known residue
