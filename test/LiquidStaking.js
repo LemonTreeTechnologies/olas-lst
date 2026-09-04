@@ -1783,10 +1783,11 @@ describe("Liquid Staking", function () {
             const externalStakingTokenInstanceV2 = await ethers.getContractAt("StakingToken", externalStakingTokenAddressV2);
 
             // Create staking proxy config: 80% of rewards - to stOLAS, 17.5% - to protocol, 2.5% - to curating agent
+            // No staking guard, so staking access must be stated explicitly as open
             // Staking type - STAKING_TYPE_OLAS_V1
-            const stakingConfigValueV1 = await externalStakingDistributor.wrapStakingConfig(AddressZero, 8000, 1750, 250, 0);
+            const stakingConfigValueV1 = await externalStakingDistributor.wrapStakingConfig(AddressZero, 8000, 1750, 250, 0, true);
             // Staking type - STAKING_TYPE_OLAS_V2
-            const stakingConfigValueV2 = await externalStakingDistributor.wrapStakingConfig(AddressZero, 8000, 1750, 250, 1);
+            const stakingConfigValueV2 = await externalStakingDistributor.wrapStakingConfig(AddressZero, 8000, 1750, 250, 1, true);
 
             // Whitelist staking proxies
             await externalStakingDistributor.setStakingProxyConfigs([externalStakingTokenAddressV1,
