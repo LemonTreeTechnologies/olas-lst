@@ -29,6 +29,14 @@ interface ISafe {
     function isModuleEnabled(address module) external view returns (bool);
 }
 
+// Token interface
+interface IToken {
+    /// @dev Gets the amount of tokens owned by a specified account.
+    /// @param account Account address.
+    /// @return Amount of tokens owned.
+    function balanceOf(address account) external view returns (uint256);
+}
+
 // Service interface
 interface IService {
     struct TokenSecurityDeposit {
@@ -72,6 +80,12 @@ error ModuleDisabled(address module);
 /// @param expected Expected operator balance.
 error OperatorBalanceSlashed(uint256 serviceId, uint256 provided, uint256 expected);
 
+/// @dev Staking token was moved out of the service multisig.
+/// @param multisig Multisig address.
+/// @param provided Current staking token balance.
+/// @param expected Minimum expected staking token balance.
+error StakingTokenWithdrawn(address multisig, uint256 provided, uint256 expected);
+
 /// @dev Caught reentrancy violation.
 error ReentrancyGuard();
 
@@ -79,11 +93,15 @@ error ReentrancyGuard();
 contract MultisigGuard is Implementation {
     // keccak256("guard_manager.guard.address")
     bytes32 internal constant GUARD_STORAGE_SLOT = 0x4a204f620c8c5ccdca3fd54d003badd85ba500436a431f0cbda4f558c93c34c8;
+    // Transient storage seed for per-multisig staking token balances
+    bytes32 internal constant STAKING_TOKEN_BALANCE_SEED = keccak256("MultisigGuard.stakingTokenBalance");
 
     // Service registry token utility address
     address public immutable serviceRegistryTokenUtility;
     // External staking distributor address
     address public immutable externalStakingDistributor;
+    // Staking token address
+    address public immutable stakingToken;
 
     // Reentrancy lock
     uint256 internal _locked = 1;
@@ -91,14 +109,19 @@ contract MultisigGuard is Implementation {
     /// @dev MultisigGuard constructor.
     /// @param _serviceRegistryTokenUtility Service registry token utility address.
     /// @param _externalStakingDistributor External staking distributor address.
-    constructor(address _serviceRegistryTokenUtility, address _externalStakingDistributor) {
+    /// @param _stakingToken Staking token address.
+    constructor(address _serviceRegistryTokenUtility, address _externalStakingDistributor, address _stakingToken) {
         // Check for zero addresses
-        if (_serviceRegistryTokenUtility == address(0) || _externalStakingDistributor == address(0)) {
+        if (
+            _serviceRegistryTokenUtility == address(0) || _externalStakingDistributor == address(0)
+                || _stakingToken == address(0)
+        ) {
             revert ZeroAddress();
         }
 
         serviceRegistryTokenUtility = _serviceRegistryTokenUtility;
         externalStakingDistributor = _externalStakingDistributor;
+        stakingToken = _stakingToken;
     }
 
     /// @dev Initializes multisig guard.
@@ -110,6 +133,10 @@ contract MultisigGuard is Implementation {
         owner = msg.sender;
     }
 
+    /// @dev Checks state before multisig execution.
+    /// @notice Records the service multisig staking token balance, which checkAfterExecution requires not to
+    ///         have decreased. Safe does not route module transactions past a guard, so this constrains owner
+    ///         transactions only and never the distributor settling rewards.
     function checkTransaction(
         address,
         uint256,
@@ -122,7 +149,16 @@ contract MultisigGuard is Implementation {
         address payable,
         bytes memory,
         address
-    ) external {}
+    ) external {
+        uint256 stakingTokenBalance = IToken(stakingToken).balanceOf(msg.sender);
+        bytes32 slot = _stakingTokenBalanceSlot(msg.sender);
+
+        // Transient storage: the value is only needed until checkAfterExecution later in the same transaction
+        // solhint-disable-next-line no-inline-assembly
+        assembly {
+            tstore(slot, stakingTokenBalance)
+        }
+    }
 
     /// @dev Checks state after multisig execution.
     /// @param success True if multisig transaction has been executed.
@@ -133,7 +169,26 @@ contract MultisigGuard is Implementation {
         }
         _locked = 2;
 
-        if (!success) return;
+        // Release the lock before returning: this contract is a single guard shared by every service multisig,
+        // so leaving it taken would lock all of them out of owner transactions permanently. Safe reaches this
+        // path with success == false whenever safeTxGas or gasPrice is non-zero, which the multisig owner sets
+        if (!success) {
+            _locked = 1;
+            return;
+        }
+
+        // Check that the staking token was not moved out of the multisig
+        uint256 balanceBefore;
+        bytes32 slot = _stakingTokenBalanceSlot(msg.sender);
+        // solhint-disable-next-line no-inline-assembly
+        assembly {
+            balanceBefore := tload(slot)
+        }
+
+        uint256 balanceAfter = IToken(stakingToken).balanceOf(msg.sender);
+        if (balanceAfter < balanceBefore) {
+            revert StakingTokenWithdrawn(msg.sender, balanceAfter, balanceBefore);
+        }
 
         // Check guard slot
         // Get guard payload
@@ -195,6 +250,13 @@ contract MultisigGuard is Implementation {
         }
 
         _locked = 1;
+    }
+
+    /// @dev Gets the transient storage slot holding a multisig staking token balance.
+    /// @param multisig Multisig address.
+    /// @return slot Transient storage slot.
+    function _stakingTokenBalanceSlot(address multisig) internal pure returns (bytes32 slot) {
+        slot = keccak256(abi.encode(STAKING_TOKEN_BALANCE_SEED, multisig));
     }
 
     /// @dev Checks multisig guard via delegatecall.

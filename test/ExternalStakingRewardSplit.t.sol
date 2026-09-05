@@ -151,7 +151,8 @@ contract ExternalStakingRewardSplitTest is LiquidStakingBase {
 
         (, address multisig,,,,,) = IService(address(serviceRegistry)).mapServices(_serviceId());
 
-        // Time is tracked explicitly: in this foundry version the test frame does not observe previous warps
+        // Time is tracked explicitly: under viaIR the optimizer hoists TIMESTAMP out of a loop, so skip() and
+        // block.timestamp-relative warps do not accumulate
         uint256 ts = block.timestamp;
         _produceActivity(multisig);
         ts += LIVENESS_PERIOD + 1;

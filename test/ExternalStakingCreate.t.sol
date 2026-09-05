@@ -94,8 +94,9 @@ contract ExternalStakingCreateTest is LiquidStakingBase {
 
         // Produce liveness across the pool minimum staking duration, so the service stays active and can be
         // unstaked later. Each round is one epoch of real activity on the service multisig.
-        // Time is tracked explicitly rather than via skip() or block.timestamp: in this foundry version the
-        // test frame does not observe previous warps, so both would keep warping to the same timestamp.
+        // Time is tracked explicitly rather than via skip() or a block.timestamp-relative warp: under viaIR the
+        // optimizer treats TIMESTAMP as loop-invariant and hoists it out, so both would keep warping to the
+        // same timestamp. Reproducible on foundry 1.8.1, and passes with viaIR disabled.
         uint256 ts = block.timestamp;
         for (uint256 i = 0; i < 3; ++i) {
             _produceActivity(multisig);

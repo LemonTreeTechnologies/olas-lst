@@ -324,7 +324,8 @@ describe("Liquid Staking", function () {
         await deployer.sendTransaction({to: externalStakingDistributor.address, value: ethers.utils.parseEther("1")});
 
         const MultisigGuard = await ethers.getContractFactory("MultisigGuard");
-        multisigGuard = await MultisigGuard.deploy(serviceRegistryTokenUtility.address, externalStakingDistributor.address);
+        multisigGuard = await MultisigGuard.deploy(serviceRegistryTokenUtility.address, externalStakingDistributor.address,
+            olas.address);
         await multisigGuard.deployed();
 
         // Initialize multisigGuard

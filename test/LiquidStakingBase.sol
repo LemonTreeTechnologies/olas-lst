@@ -292,7 +292,7 @@ abstract contract LiquidStakingBase is Test {
         vm.deal(address(externalStakingDistributor), 1 ether);
 
         MultisigGuard multisigGuardImplementation =
-            new MultisigGuard(address(serviceRegistryTokenUtility), address(externalStakingDistributor));
+            new MultisigGuard(address(serviceRegistryTokenUtility), address(externalStakingDistributor), address(olas));
         initPayload = abi.encodeWithSelector(multisigGuardImplementation.initialize.selector);
         Proxy multisigGuardProxy = new Proxy(address(multisigGuardImplementation), initPayload);
         multisigGuard = MultisigGuard(payable(address(multisigGuardProxy)));
