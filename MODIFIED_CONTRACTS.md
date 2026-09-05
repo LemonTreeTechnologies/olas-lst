@@ -113,8 +113,13 @@ active; nothing has been mis-split in production.
 
 `wrapStakingConfig` packed the staking guard as `uint160(stakingGuard) << 56`, which shifts within
 `uint160` and silently drops the top 56 bits of the address. Any config built through that helper carried
-a corrupted staking guard that no account could match, disabling `setCuratingAgents` for that proxy. Live
-configs are unaffected — they were packed off-chain — but the helper is now correct.
+a corrupted staking guard that no account could match, disabling `setCuratingAgents` for that proxy and
+leaving only the owner able to stake into it. It fails closed rather than open.
+
+Verified against the deployed Gnosis distributor: `wrapStakingConfig(0x860ffb69…, 4500, 500, 5000, 0)`
+returns a config whose guard field reads `0xf2fd24aee9bcc82357f863f88e`, while the live stored config for
+the same proxy holds the full `0x860ffb692ce3b4f2fd24aee9bcc82357f863f88e`. Live configs were therefore
+packed off-chain and are unaffected; the helper itself was never used for them.
 
 ### Known residue
 
@@ -130,10 +135,17 @@ them re-deployable again. That pool has `availableRewards == 0`, so no yield is 
 
 ### Shared reentrancy lock
 
-`checkAfterExecution` took the lock and returned early on `success == false` without releasing it. The
-guard is a **single proxy shared by every service multisig on the chain**, so one failed Safe transaction
-locked all of them out of owner transactions permanently, stopping liveness and therefore rewards. Safe
-reaches that path whenever `safeTxGas` or `gasPrice` is non-zero, which the multisig owner controls.
+`checkAfterExecution` took the lock and returned early on `success == false` without releasing it, and it
+has no caller restriction. The guard is a **single proxy shared by every service multisig on the chain**,
+so any account could permanently lock all of them out of owner transactions with one call, stopping
+liveness and therefore rewards. There is no function that resets the lock, so recovery requires an
+implementation upgrade.
+
+Verified against deployed bytecode on a Gnosis fork: an unrelated EOA calling
+`checkAfterExecution(0, false)` on `0xBD645cf2…` leaves `_locked = 2`, after which every call reverts
+`ReentrancyGuard()`. Safe also reaches the same path on its own whenever a multisig transaction fails with
+a non-zero `safeTxGas` or `gasPrice`. Both live guards read `_locked = 1` today, so this has not been
+triggered.
 
 ### Staking token balance
 
