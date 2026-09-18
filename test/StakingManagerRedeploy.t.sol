@@ -159,6 +159,49 @@ contract StakingManagerRedeployTest is LiquidStakingBase {
         assertEq(stakingTokenInstance.getNumServiceIds(), 1, "service is not staked after recovery module was set");
     }
 
+    /// @dev The deprecated same-address multisig slot is preserved across an implementation upgrade.
+    ///
+    /// The slot is no longer written or read by the contract, but deployed proxies hold the address their
+    /// initialize() stored there. Removing the variable would shift every field after it, so it stays declared,
+    /// and its getter keeps returning whatever the proxy already had.
+    function testDeprecatedSlotSurvivesUpgrade() public {
+        // Emulate a proxy initialized by an earlier implementation, which stored the address in slot 2
+        address legacy = address(gnosisSafeSameAddressMultisig);
+        vm.store(address(stakingManager), bytes32(uint256(2)), bytes32(uint256(uint160(legacy))));
+        assertEq(stakingManager.safeSameAddressMultisig(), legacy, "deprecated slot was not seeded");
+
+        StakingManager newImplementation = new StakingManager(
+            address(olas),
+            address(serviceManager),
+            address(stakingFactory),
+            address(safeModuleInitializer),
+            address(gnosisSafeL2),
+            address(beacon),
+            address(collector),
+            AGENT_ID,
+            DEFAULT_HASH
+        );
+        stakingManager.changeImplementation(address(newImplementation));
+
+        // The deprecated value is untouched, and every field around it still reads correctly
+        assertEq(stakingManager.safeSameAddressMultisig(), legacy, "deprecated slot moved across the upgrade");
+        assertEq(stakingManager.safeMultisig(), address(gnosisSafeMultisig), "safeMultisig moved");
+        assertEq(stakingManager.fallbackHandler(), address(fallbackHandler), "fallbackHandler moved");
+        assertEq(stakingManager.l2StakingProcessor(), address(gnosisStakingProcessorL2), "l2StakingProcessor moved");
+        assertEq(stakingManager.recoveryModule(), address(recoveryModule), "recoveryModule moved");
+
+        // A fresh proxy leaves the slot at zero, since the current initialize() does not write it
+        bytes memory initPayload = abi.encodeWithSelector(
+            newImplementation.initialize.selector,
+            address(gnosisSafeMultisig),
+            address(recoveryModule),
+            address(fallbackHandler)
+        );
+        StakingManager fresh = StakingManager(payable(address(new Proxy(address(newImplementation), initPayload))));
+        assertEq(fresh.safeSameAddressMultisig(), address(0), "fresh deployment must leave the slot at zero");
+        assertEq(fresh.recoveryModule(), address(recoveryModule), "fresh deployment recoveryModule is wrong");
+    }
+
     /// @dev Multisig implementations are owner-settable and must be whitelisted in the service registry.
     function testChangeMultisigImplementations() public {
         // Only owner
@@ -232,7 +275,7 @@ contract StakingManagerRedeployTest is LiquidStakingBase {
 
     /// @dev Storage slot of the appended recoveryModule variable in StakingManager.
     function _recoveryModuleSlot() internal pure returns (uint256) {
-        // Implementation.owner(0), safeMultisig(1), _deprecatedSafeSameAddressMultisig(2), fallbackHandler(3),
+        // Implementation.owner(0), safeMultisig(1), safeSameAddressMultisig(2, deprecated), fallbackHandler(3),
         // l2StakingProcessor(4), _nonce(5), _locked(6), mapStakingProxyBalances(7), mapStakedServiceIds(8),
         // mapServiceIdActivityModules(9), mapLastStakedServiceIdxs(10), recoveryModule(11)
         return 11;
