@@ -143,10 +143,12 @@ contract StakingManager is Implementation, ERC721TokenReceiver {
 
     // Safe multisig processing contract address
     address public safeMultisig;
-    // Deprecated slot: previously safeSameAddressMultisig, whose implementation has been de-whitelisted in the
-    // service registry. Kept private to preserve the storage layout of already deployed proxies.
-    // Service re-deployment now goes via recoveryModule, which is whitelisted and preserves the same multisig.
-    address private _deprecatedSafeSameAddressMultisig;
+    // Deprecated: Safe same address multisig processing contract address.
+    // Its implementation has been de-whitelisted in the service registry, so it is no longer used anywhere:
+    // service re-deployment goes via recoveryModule, which is whitelisted and preserves the same multisig.
+    // The slot is kept to preserve the storage layout of already deployed proxies, and still holds the address
+    // set by their initialize(). It is not written by the current initialize(), so it reads zero on new deployments.
+    address public safeSameAddressMultisig;
     // Safe fallback handler
     address public fallbackHandler;
     // L2 staking processor address
