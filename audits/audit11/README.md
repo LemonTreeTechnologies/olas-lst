@@ -41,11 +41,16 @@ within the protocol); the remainder are informational / hardening notes. The cor
 immune to donation, inflation and read-only-reentrancy manipulation because `totalAssets()` returns
 internal accounting (`totalReserves`), never `balanceOf(this)`.
 
+> **Addendum.** Both findings below are now fixed, and every observation is dispositioned. Two further
+> defects were found while implementing those fixes and are recorded under
+> [Items surfaced while addressing this report](#items-surfaced-while-addressing-this-report); the verdict
+> above predates them.
+
 ---
 
 ## Findings
 
-### L-1 (Low) — External-staking (V1) rewards can be taxed twice
+### L-1 (Low) — External-staking (V1) rewards can be taxed twice — FIXED
 
 `ExternalStakingDistributor._distributeRewards` already splits an external service's reward into
 collector / protocol / curating-agent shares (per the configured `protocolRewardFactor`) and sends
@@ -71,7 +76,18 @@ lower than the configured split implies.
 external rewards, either exempt the ESD-sourced collector bucket from `Collector.protocolFactor`, or
 set `protocolRewardFactor = 0` in the external staking configs so the protocol fee is applied once.
 
-### I-1 (Informational / hardening) — `MultisigGuard` does not constrain the service-multisig token balance
+**Resolution.** Fixed by exempting the ESD-sourced bucket. `_distributeRewards` now tops up a new
+`EXTERNAL_REWARD` operation instead of the shared `REWARD` one, for both V1 and V2 staking types.
+`Collector.relayTokens` applies `protocolFactor` to `REWARD` only, so the configured split is what the
+L1 `Distributor` receives, while internal staking rewards keep paying the factor as intended. `Collector`
+itself is unchanged and does not need re-deployment — its operation gating already did the right thing.
+`EXTERNAL_REWARD` must be registered on the Collector with the same L1 receiver as `REWARD` before the
+distributor upgrade, and off-chain reward relayers must switch to it.
+
+Note the finding was **latent, not active**: `Collector.protocolFactor` reads `0` on both Gnosis and
+Base, so no reward has been mis-split in production.
+
+### I-1 (Informational / hardening) — `MultisigGuard` does not constrain the service-multisig token balance — FIXED
 
 `MultisigGuard.checkTransaction` is empty, and `checkAfterExecution` validates only that the
 external-staking-distributor and guard modules remain enabled and that the operator bond is not
@@ -97,6 +113,14 @@ sweep after distribution moves ~0.
 **Hardening.** Consider having `MultisigGuard` reject an owner `execTransaction` that transfers the
 staking token out of the multisig, so the "no standing balance on the Safe" invariant does not rely on
 the claim-gating behaviour of externally-integrated staking proxies.
+
+**Resolution.** Fixed as recommended. `checkTransaction` now records the service multisig staking token
+balance and `checkAfterExecution` reverts `StakingTokenWithdrawn` if it decreased, so the invariant no
+longer rests on the claim-gating behaviour of third-party staking proxies. Safe does not route module
+transactions past a guard, so this constrains owner transactions only: the distributor keeps settling
+rewards through its module call, and receiving the token is unaffected. The balance is held in transient
+storage keyed by multisig. `MultisigGuard` takes the staking token address as a third constructor
+argument.
 
 ---
 
@@ -124,6 +148,56 @@ the claim-gating behaviour of externally-integrated staking proxies.
 - **`StakingTokenLocked.stake`** does not validate the staked service multisig's proxy hash. This is
   safe because `stake` is restricted to `StakingManager`, which is the sole minter of those multisigs;
   noted as a deviation from the base `StakingToken` pattern.
+
+### Observation dispositions
+
+None of the observations resulted in a contract change. Each was reviewed and dispositioned as follows:
+
+| Observation | Disposition |
+|---|---|
+| Treasury withdrawal finalization is time-based | **Configuration.** `withdrawDelay` is an operational parameter, checked against worst-case bridge latency at deployment time. No contract change; `Treasury` untouched. |
+| `Depository.deposit` permissionless with `stakeAmount == 0` | **By design.** Consistent with the `audit9` INFO-3 / INFO-4 resolutions on permissionless triggers. Routing stays limited to owner-approved Active models and the owner pause mitigates griefing. |
+| `DefaultStakingProcessorL2.redeem` emits `RequestExecuted(STAKE)` | **By design.** The label describes the original request and the fund movement is correct; relabelling would misreport what was requested. Recorded as an indexer note. |
+| `BaseStakingProcessorL2.relayToL1` passes `"0x"` as `extraData` | **By design for now.** Harmless for the OP-stack `withdrawTo`. The contract is not in the current re-deployment set, and editing live contract source without a re-deployment would put the repository out of sync with deployed bytecode. |
+| `StakingTokenLocked.stake` does not validate the proxy hash | **By design.** `stake` is restricted to `StakingManager`, the sole minter of those multisigs. Matches the `audit9` L-5 disposition on the same contract. |
+
+---
+
+## Items surfaced while addressing this report
+
+Two defects not in the findings above were found while implementing the resolutions. Both are dormant
+on the live deployments, and both are fixed alongside them. They are recorded here so the **PASS** verdict
+is not read as covering them.
+
+### A-1 — `MultisigGuard.checkAfterExecution` permanently takes a shared lock — FIXED
+
+`checkAfterExecution` took the reentrancy lock and returned early on `success == false` without releasing
+it, and has no caller restriction. The guard is a single proxy shared by every service multisig on the
+chain, and no function resets the lock, so any account could permanently lock all of them out of owner
+transactions with one call — stopping liveness and therefore rewards, recoverable only by an
+implementation upgrade. Safe also reaches the same path on its own whenever a multisig transaction fails
+with a non-zero `safeTxGas` or `gasPrice`.
+
+Verified against deployed bytecode on a Gnosis fork: an unrelated account calling
+`checkAfterExecution(0, false)` on the live guard leaves its lock taken, after which every call reverts
+`ReentrancyGuard()`. Both live guards read unlocked at the time of writing, so this was never triggered.
+
+**Resolution.** Fixed. The lock is released before the early return, which also makes the permissionless
+call a no-op.
+
+### A-2 — `wrapStakingConfig` truncates the staking guard address — FIXED
+
+The helper packed the guard as `uint160(stakingGuard) << 56`, which evaluates the shift in `uint160` and
+silently drops the top 56 bits. Any config built through it carried a corrupted staking guard that no
+account could match, disabling `setCuratingAgents` for that proxy and leaving only the owner able to
+stake into it. It fails closed rather than open.
+
+Verified against the deployed Gnosis distributor: the helper returns a guard field of
+`0xf2fd24aee9bcc82357f863f88e` for a guard whose live stored config holds the full
+`0x860ffb692ce3b4f2fd24aee9bcc82357f863f88e`. Live configs were therefore packed off-chain and are
+unaffected; the helper itself was never used for them.
+
+**Resolution.** Fixed with a `uint256` cast before the shift, covered by a packing round-trip test.
 
 ---
 
