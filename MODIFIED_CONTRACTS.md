@@ -31,7 +31,7 @@ by `StakingManager.unstake` sit in `PreRegistration` and the next `stake()` reve
 
 | Contract | Layer | Changes |
 |---|---|---|
-| `contracts/l2/StakingManager.sol` | L2 | `_deployAndStake` re-deploys via `recoveryModule` instead of the de-whitelisted `safeSameAddressMultisig`, and registers the service under its own agent Id rather than the current immutable one; `safeSameAddressMultisig` slot deprecated and `recoveryModule` appended; new owner-only `changeMultisigImplementations`, which requires the implementations to be whitelisted in the service registry |
+| `contracts/l2/StakingManager.sol` | L2 | `_deployAndStake` re-deploys via `recoveryModule` instead of the de-whitelisted `safeSameAddressMultisig`, and registers the service under its own agent Id rather than the current immutable one; `safeSameAddressMultisig` kept as a deprecated slot and `recoveryModule` appended; new owner-only `changeMultisigImplementations`, which requires the implementations to be whitelisted in the service registry |
 | `contracts/l2/ExternalStakingDistributor.sol` | L2 | Service creation deploys through the whitelisted `safeMultisig` with `safeSetupHelper` as the Safe `setup()` delegatecall target, replacing the pre-create plus `safeSameAddressMultisig` registration; `_createMultisigWithSelfAsModule` removed entirely, so the distributor is never a multisig owner; `safeSameAddressMultisig` immutable dropped, `safeMultisig` and `safeSetupHelper` appended as storage; `initialize` takes both, and a new owner-only `changeMultisigImplementations` sets them |
 
 ### New contract
