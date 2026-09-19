@@ -262,7 +262,12 @@ contract ExternalStakingCreateTest is LiquidStakingBase {
         uint256[] memory configs = new uint256[](1);
         // 80% to the collector, 17.5% to the protocol, 2.5% to the curating agent, staking type V1
         configs[0] = externalStakingDistributor.wrapStakingConfig(
-            stakingGuard, 8000, 1750, 250, ExternalStakingDistributor.StakingType.STAKING_TYPE_OLAS_V1
+            stakingGuard,
+            8000,
+            1750,
+            250,
+            ExternalStakingDistributor.StakingType.STAKING_TYPE_OLAS_V1,
+            stakingGuard == address(0)
         );
         externalStakingDistributor.setStakingProxyConfigs(stakingProxies, configs);
     }

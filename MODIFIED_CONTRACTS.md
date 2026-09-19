@@ -51,6 +51,62 @@ creation revert `ZeroAddress` until they are set. Immediately after upgrading ea
 ./scripts/deployment/script_l2_12_change_external_multisig_implementations.sh <network>
 ```
 
+## Pending explicit staking access
+
+A zero `stakingGuard` in a staking proxy config used to mean both "deliberately permissionless" and
+"nobody configured a guard yet", and `stake()` treated the ambiguous case as open. Access is now stated
+explicitly with an `openAccess` flag in the config word, `stake()` denies by default, and
+`setStakingProxyConfigs` rejects a config carrying neither or both.
+
+| Contract | Layer | Changes |
+|---|---|---|
+| `contracts/l2/ExternalStakingDistributor.sol` | L2 | `openAccess` flag added at bit 216 of the staking config, with `wrapStakingConfig` / `unwrapStakingConfig` extended; `stake()` grants non-owner access only via the flag or the staking guard curating-agent allowlist; `setStakingProxyConfigs` rejects ambiguous configs with a new `WrongStakingAccess` error; fixed `wrapStakingConfig` truncating the staking guard address |
+
+### Config migration
+
+Existing on-chain configs were written by the previous implementation and carry no `openAccess` flag.
+Guarded proxies (all of Gnosis and Mode) keep working unchanged. The three **Base** proxies with a zero
+staking guard **close** on upgrade and must be re-set with the flag in the same batch:
+
+| Chain | Staking proxy | Collector / protocol / curating |
+|---|---|---|
+| Base | `0x0dfafbf570e9e813507aae18aa08dfba0abc5139` | 500 / 1000 / 8500 |
+| Base | `0x66a92cda5b319dcccac6c1cecbb690ca3fb59488` | 500 / 1000 / 8500 |
+| Base | `0x51c5f4982b9b0b3c0482678f5847ea6228cc8e54` | 500 / 1000 / 8500 |
+
+Guard-governed proxies are unaffected either way: the staking hash derivation and the curating-agent
+allowlist are unchanged, so existing entries keep matching.
+
+### Run the config re-set BEFORE the implementation upgrade
+
+There is no need for a window at all. The `openAccess` bit sits above every field the previous
+implementation reads, so that implementation ignores it and behaves exactly as it does today. Verified on a
+Base fork against the deployed distributor: it accepts the flagged config, `unwrapStakingConfig` returns the
+same guard and factors, and a non-owner `stake()` still passes the access gate, failing later at
+`UnauthorizedMultisig`.
+
+So the two steps are independent and can be run in either order, days apart:
+
+```bash
+# chain specific, safe to run at any time, including before the upgrade
+./scripts/deployment/script_l2_10_set_external_staking_configs.sh base_mainnet
+
+# chain agnostic, same call on every chain
+#   deploy the implementation, then changeImplementation on the proxy
+```
+
+Running the config re-set first is preferred, because then no proxy is ever closed.
+
+`reStake` keys off `mapServiceIdCuratingAgents` and `claim` is permissionless, so the eleven services
+already staked on Base keep earning, claiming and re-staking regardless of the order.
+
+### Guard address truncation
+
+`wrapStakingConfig` packed the staking guard as `uint160(stakingGuard) << 56`, which shifts within
+`uint160` and silently drops the top 56 bits of the address. Any config built through that helper carried
+a corrupted staking guard that no account could match, disabling `setCuratingAgents` for that proxy. Live
+configs are unaffected — they were packed off-chain — but the helper is now correct.
+
 ### Known residue
 
 The 20 services parked on the Gnosis staking pool `0x2da9ae6f…` were created with agent Id 69, while
