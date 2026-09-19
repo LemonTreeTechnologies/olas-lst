@@ -1,0 +1,247 @@
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.30;
+
+import {Test, console} from "forge-std/Test.sol";
+import {ExternalStakingDistributor} from "../../contracts/l2/ExternalStakingDistributor.sol";
+import {SafeSetupHelper} from "../../contracts/l2/SafeSetupHelper.sol";
+
+/// @dev Proves we can actually EARN on Base pool 0x51c5f498, not merely take a seat.
+///
+/// That pool's activity checker is a third-party contract (the Jinn "JinnRouter"), sitting behind
+/// an upgradeable proxy the Jinn team owns. Its liveness rule is unusual and easy to get wrong:
+///
+///   nonceDelta = cur[0] - last[0]                       // Safe transactions
+///   total      = sum of cur[i] - last[i] for i in 1..4  // claimed activities
+///   require(total != 0 && total <= nonceDelta)          // <-- the bound
+///   pass       = total * 1e18 / ts >= livenessRatio
+///
+/// The bound means activities can never be batched: N creations in one Safe transaction give
+/// total = N against nonceDelta = 1 and credit ZERO. One activity per Safe transaction, always --
+/// the same trap as mech deliveries on Gnosis 0xCAbD0C94, by a different mechanism.
+///
+/// Counters are [safeNonce, creation, restorationDelivery, evalCreation, evalDelivery]. Only
+/// index 1 is needed: JinnRouter.createRestorationJob does `creationCount[msg.sender]++` with no
+/// access control, then forwards a request to the Mech Marketplace.
+///
+/// What is REAL here: the live pool, the live checker/router, the live ServiceRegistry, a real
+/// distributor-created service, 20 real Safe execTransaction calls through the real router, and
+/// a real permissionless checkpoint() on the live pool.
+/// What is MOCKED: only the Mech Marketplace's `request` call at the far end of the router, which
+/// is third-party plumbing we are not testing and which would need a live mech we do not yet own.
+///
+/// Run: forge test --match-contract Jinn51c5RewardFork -vv    (needs BASE_RPC_URL)
+interface IStakingP {
+    function activityChecker() external view returns (address);
+    function availableRewards() external view returns (uint256);
+    function getServiceIds() external view returns (uint256[] memory);
+    function minStakingDeposit() external view returns (uint256);
+    function livenessPeriod() external view returns (uint256);
+    function checkpoint() external returns (uint256[] memory, uint256[] memory, uint256[] memory, uint256[] memory);
+    function mapServiceInfo(uint256 serviceId)
+        external
+        view
+        returns (address multisig, address owner, uint256 tsStart, uint256 reward, uint256 inactivity);
+}
+
+interface IJinnRouter {
+    function creationCount(address) external view returns (uint256);
+    function livenessRatio() external view returns (uint256);
+    function getMultisigNonces(address) external view returns (uint256[] memory);
+}
+
+interface ISafeTx {
+    function nonce() external view returns (uint256);
+    function getTransactionHash(
+        address to,
+        uint256 value,
+        bytes calldata data,
+        uint8 operation,
+        uint256 safeTxGas,
+        uint256 baseGas,
+        uint256 gasPrice,
+        address gasToken,
+        address refundReceiver,
+        uint256 _nonce
+    ) external view returns (bytes32);
+    function execTransaction(
+        address to,
+        uint256 value,
+        bytes calldata data,
+        uint8 operation,
+        uint256 safeTxGas,
+        uint256 baseGas,
+        uint256 gasPrice,
+        address gasToken,
+        address payable refundReceiver,
+        bytes calldata signatures
+    ) external payable returns (bool);
+}
+
+interface IRegistryTS {
+    function totalSupply() external view returns (uint256);
+}
+
+contract Jinn51c5RewardForkTest is Test {
+    address constant OLAS = 0x54330d28ca3357F294334BDC454a032e7f353416;
+    address constant SERVICE_MANAGER = 0x1262136cac6a06A782DC94eb3a3dF0b4d09FF6A6;
+    address constant SERVICE_REGISTRY = 0x3C1fF68f5aa342D296d4DEe4Bb1cACCA912D95fE;
+    address constant SAFE_MULTISIG_RECOVERY = 0x8c534420Db046d6801A1A8bE6fb602cC8F257453;
+    address constant FALLBACK_HANDLER = 0xf48f2B2d2a534e402487b3ee7C18c33Aec0Fe5e4;
+    address constant MULTISEND = 0x40A2aCCbd92BCA938b02010E17A5b8929b49130D;
+    address constant COLLECTOR_PROXY = 0xaC7eA9478E0e1186E7D1c82b8d8dc80AEe0F79F6;
+    address constant GNOSIS_SAFE_MULTISIG = 0x22bE6fDcd3e29851B29b512F714C328A00A96B83;
+    address constant MULTISIG_GUARD_PROXY = 0x4D3911420a8E4E7dB8c979f4915dA8983C5e3ba2;
+    address constant ESD_PROXY = 0x40abf47B926181148000DbCC7c8DE76A3a61a66f;
+    bytes32 constant CONFIG_HASH = 0xca0a2dda805c401808b21b8fdf86eb8b1b4117931cb6dbf8226c38dfd0214068;
+
+    address constant POOL = 0x51c5f4982B9b0B3c0482678f5847EA6228Cc8E54;
+    // The pool reads liveness through the checker PROXY, but that proxy forwards with
+    // STATICCALL, so it serves reads only -- a state-changing call through it reverts
+    // StateChangeDuringStaticCall. The counters therefore live in the implementation's own
+    // storage and activity must be sent to the implementation DIRECTLY. Both addresses report
+    // the same creationCount (98 for service 601's multisig), which is how this was pinned down.
+    address constant CHECKER_PROXY = 0x477C41Cccc8bd08027e40CEF80c25918C595a24d;
+    address constant ROUTER = 0xfFa7118A3D820cd4E820010837D65FAfF463181B;
+    address constant MECH_MARKETPLACE = 0xf24eE42edA0fc9b33B7D41B06Ee8ccD2Ef7C5020;
+    uint256 constant AGENT_ID = 103;
+
+    ExternalStakingDistributor internal esd;
+    uint256 internal agentPk = 0xA11CE;
+    address internal agentInstance;
+
+    function _skip() internal returns (bool) {
+        try vm.envString("BASE_RPC_URL") returns (string memory) {
+            return false;
+        } catch {
+            console.log("SKIP: BASE_RPC_URL not set");
+            return true;
+        }
+    }
+
+    function _setUpFork() internal {
+        vm.createSelectFork(vm.envString("BASE_RPC_URL"));
+        agentInstance = vm.addr(agentPk);
+
+        // Upgrade the LIVE distributor proxy in place rather than deploying a standalone one.
+        // The live MultisigGuard only recognises the canonical distributor address as a module
+        // (a standalone copy fails ModuleDisabled), and this is what the real fix does anyway:
+        // deploy the new implementation, point the existing proxy at it, then set the Safe
+        // multisig implementations. Owner is still an EOA on Base, so we impersonate it.
+        ExternalStakingDistributor impl = new ExternalStakingDistributor(
+            OLAS, SERVICE_MANAGER, SAFE_MULTISIG_RECOVERY, FALLBACK_HANDLER, MULTISEND, COLLECTOR_PROXY
+        );
+        SafeSetupHelper helper = new SafeSetupHelper();
+        esd = ExternalStakingDistributor(payable(ESD_PROXY));
+        address esdOwner = esd.owner();
+        vm.startPrank(esdOwner);
+        esd.changeImplementation(address(impl));
+        esd.changeMultisigImplementations(GNOSIS_SAFE_MULTISIG, address(helper));
+
+        address[] memory proxies = new address[](1);
+        uint256[] memory configs = new uint256[](1);
+        proxies[0] = POOL;
+        configs[0] = esd.wrapStakingConfig(
+            address(0), 5000, 0, 5000, ExternalStakingDistributor.StakingType.STAKING_TYPE_OLAS_V1
+        );
+        esd.setStakingProxyConfigs(proxies, configs);
+        vm.stopPrank();
+
+        vm.deal(address(esd), 1 ether);
+        deal(OLAS, address(esd), IStakingP(POOL).minStakingDeposit() * 4);
+    }
+
+    /// @dev One activity, one Safe transaction, through the real router.
+    function _createRestorationJob(address multisig) internal {
+        bytes memory inner = abi.encodeWithSelector(
+            bytes4(0x6baf28eb), // createRestorationJob(bytes,address,uint256,uint256,bytes32,bytes)
+            bytes(hex"01"),
+            address(0xBEEF), // priorityMech -- the marketplace call is mocked
+            uint256(2), // maxDeliveryRate: protocol minimum
+            uint256(3600),
+            bytes32(0),
+            bytes("")
+        );
+        ISafeTx safe = ISafeTx(multisig);
+        uint256 n = safe.nonce();
+        bytes32 h = safe.getTransactionHash(ROUTER, 0, inner, 0, 0, 0, 0, address(0), address(0), n);
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(agentPk, h);
+        vm.prank(agentInstance);
+        safe.execTransaction(ROUTER, 0, inner, 0, 0, 0, 0, address(0), payable(address(0)), abi.encodePacked(r, s, v));
+    }
+
+    function test_51c5_stakeActAndEarn() public {
+        if (_skip()) return;
+        _setUpFork();
+
+        // ── stake ────────────────────────────────────────────────────────────────────────
+        uint256 idBefore = IRegistryTS(SERVICE_REGISTRY).totalSupply();
+        esd.stake(POOL, 0, AGENT_ID, CONFIG_HASH, agentInstance);
+        uint256 serviceId = IRegistryTS(SERVICE_REGISTRY).totalSupply();
+        assertEq(serviceId, idBefore + 1, "no service minted");
+        (address multisig,,,,) = IStakingP(POOL).mapServiceInfo(serviceId);
+        assertTrue(multisig != address(0), "no multisig");
+        emit log_named_uint("staked serviceId", serviceId);
+
+        // The marketplace is third-party plumbing at the far end of the router; mock only it.
+        vm.mockCall(MECH_MARKETPLACE, abi.encodeWithSelector(bytes4(0xf6938b09)), abi.encode(bytes32(uint256(1))));
+
+        uint256[] memory before = IJinnRouter(CHECKER_PROXY).getMultisigNonces(multisig);
+        uint256 creationsBefore = IJinnRouter(ROUTER).creationCount(multisig);
+
+        // ── act: 25 activities, one Safe transaction each ────────────────────────────────
+        // The bar is livenessRatio * 86400 / 1e18 ~= 19.92, so 20 is the minimum for a 24h
+        // epoch. 25 gives headroom for the checkpoint landing slightly late.
+        for (uint256 i = 0; i < 25; ++i) {
+            _createRestorationJob(multisig);
+        }
+
+        uint256[] memory afterN = IJinnRouter(CHECKER_PROXY).getMultisigNonces(multisig);
+        emit log_named_uint("safe nonce delta ", afterN[0] - before[0]);
+        emit log_named_uint("creation delta   ", afterN[1] - before[1]);
+        assertEq(IJinnRouter(ROUTER).creationCount(multisig) - creationsBefore, 25, "creations not counted");
+        assertEq(afterN[0] - before[0], 25, "safe nonce did not move 1:1");
+        // The bound the whole pool hinges on.
+        assertLe(afterN[1] - before[1], afterN[0] - before[0], "total must not exceed nonceDelta");
+
+        // ── close the epoch and check we were paid ───────────────────────────────────────
+        uint256 poolBefore = IStakingP(POOL).availableRewards();
+        vm.warp(block.timestamp + IStakingP(POOL).livenessPeriod() + 1);
+        IStakingP(POOL).checkpoint();
+
+        (,,, uint256 reward,) = IStakingP(POOL).mapServiceInfo(serviceId);
+        uint256 poolAfter = IStakingP(POOL).availableRewards();
+        emit log_named_uint("reward credited (wei)", reward);
+        emit log_named_uint("pool drained by (wei)", poolBefore - poolAfter);
+        assertGt(reward, 0, "VALUE CAPTURE FAILED: epoch credited zero");
+        assertGt(poolBefore, poolAfter, "pool did not pay out");
+    }
+
+    /// @dev The never-batch rule, proven rather than assumed: many activities behind a single
+    /// Safe transaction trip `total > nonceDelta` and credit nothing.
+    function test_51c5_batchingCreditsZero() public {
+        if (_skip()) return;
+        _setUpFork();
+        address checker = IStakingP(POOL).activityChecker();
+        uint256 lr = IJinnRouter(checker).livenessRatio();
+        uint256 need = (lr * 86400) / 1e18 + 1;
+
+        uint256[] memory last = new uint256[](5);
+        uint256[] memory batched = new uint256[](5);
+        batched[0] = 1; // one Safe transaction
+        batched[1] = need; // many activities inside it
+        (bool ok, bytes memory ret) = checker.staticcall(
+            abi.encodeWithSignature("isRatioPass(uint256[],uint256[],uint256)", batched, last, uint256(86400))
+        );
+        assertTrue(ok, "isRatioPass reverted");
+        assertFalse(abi.decode(ret, (bool)), "batched activity must not pass");
+
+        uint256[] memory spread = new uint256[](5);
+        spread[0] = need;
+        spread[1] = need;
+        (, ret) = checker.staticcall(
+            abi.encodeWithSignature("isRatioPass(uint256[],uint256[],uint256)", spread, last, uint256(86400))
+        );
+        assertTrue(abi.decode(ret, (bool)), "one-per-transaction must pass");
+        emit log_named_uint("activities required per service per day", need);
+    }
+}
