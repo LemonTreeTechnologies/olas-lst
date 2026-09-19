@@ -32,7 +32,9 @@ chainId=$(jq -r '.chainId' $globals)
 networkURL=$(jq -r '.networkURL' $globals)
 
 externalStakingDistributorAddress=$(jq -r '.externalStakingDistributorAddress' $globals)
-proxyData=$(cast calldata "initialize()")
+gnosisSafeMultisigImplementationAddress=$(jq -r '.gnosisSafeMultisigImplementationAddress' $globals)
+safeSetupHelperAddress=$(jq -r '.safeSetupHelperAddress' $globals)
+proxyData=$(cast calldata "initialize(address,address)" $gnosisSafeMultisigImplementationAddress $safeSetupHelperAddress)
 
 # Check for Polygon keys only since on other networks those are not needed
 if [ $chainId == 137 ]; then

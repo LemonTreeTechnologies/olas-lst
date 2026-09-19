@@ -21,13 +21,6 @@ import {IService} from "../contracts/interfaces/IService.sol";
 contract StakingManagerRedeployTest is LiquidStakingBase {
     bytes32 internal constant STAKE_OPERATION = keccak256("STAKE");
 
-    /// @dev Reproduces the live registry state: the same address multisig implementation is de-whitelisted on
-    ///      Gnosis, Base and Mode, so nothing in the staking cycle may depend on it.
-    function setUp() public virtual override {
-        super.setUp();
-        serviceRegistry.changeMultisigPermission(address(gnosisSafeSameAddressMultisig), false);
-    }
-
     /// @dev Stakes a given OLAS amount through the L2 staking processor.
     function _stakeViaProcessor(uint256 amount) internal {
         address processor = stakingManager.l2StakingProcessor();

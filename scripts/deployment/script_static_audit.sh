@@ -79,7 +79,7 @@ safeMultisigWithRecoveryModuleAddress=$(jq -r ".safeMultisigWithRecoveryModuleAd
 recoveryModuleAddress=$(jq -r ".recoveryModuleAddress" $globalsL2)
 serviceRegistryAddressL2=$(jq -r ".serviceRegistryAddress" $globalsL2)
 gnosisSafeMultisigImplementationAddress=$(jq -r ".gnosisSafeMultisigImplementationAddress" $globalsL2)
-gnosisSafeSameAddressMultisigImplementationAddress=$(jq -r ".gnosisSafeSameAddressMultisigImplementationAddress" $globalsL2)
+safeSetupHelperAddress=$(jq -r ".safeSetupHelperAddress" $globalsL2)
 fallbackHandlerAddress=$(jq -r ".fallbackHandlerAddress" $globalsL2)
 multiSendCallOnlyAddress=$(jq -r ".multiSendCallOnlyAddress" $globalsL2)
 
@@ -520,14 +520,23 @@ if [ $result != $safeMultisigWithRecoveryModuleAddress ]; then
   echo "${red}!!! Fetched address: $result${reset}"
   echo "${red}!!! Expected address: $safeMultisigWithRecoveryModuleAddress${reset}"
 fi
-# SafeSameAddressMultisig
-castArgs="$externalStakingDistributorProxyAddress safeSameAddressMultisig()(address)"
+# SafeMultisig
+castArgs="$externalStakingDistributorProxyAddress safeMultisig()(address)"
 castCmd="$castCallHeader $castArgs"
 result=$($castCmd)
-if [ $result != $gnosisSafeSameAddressMultisigImplementationAddress ]; then
-  echo "${red}!!! Collector address is incorrect!${reset}"
+if [ $result != $gnosisSafeMultisigImplementationAddress ]; then
+  echo "${red}!!! SafeMultisig address is incorrect!${reset}"
   echo "${red}!!! Fetched address: $result${reset}"
-  echo "${red}!!! Expected address: $gnosisSafeSameAddressMultisigImplementationAddress${reset}"
+  echo "${red}!!! Expected address: $gnosisSafeMultisigImplementationAddress${reset}"
+fi
+# SafeSetupHelper: service creation reverts while this is unset
+castArgs="$externalStakingDistributorProxyAddress safeSetupHelper()(address)"
+castCmd="$castCallHeader $castArgs"
+result=$($castCmd)
+if [ $result != $safeSetupHelperAddress ]; then
+  echo "${red}!!! SafeSetupHelper address is incorrect!${reset}"
+  echo "${red}!!! Fetched address: $result${reset}"
+  echo "${red}!!! Expected address: $safeSetupHelperAddress${reset}"
 fi
 # FallbackHandler
 castArgs="$externalStakingDistributorProxyAddress fallbackHandler()(address)"
