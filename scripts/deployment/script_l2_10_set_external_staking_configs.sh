@@ -167,7 +167,16 @@ i=0
 for entry in "${configEntries[@]}"; do
   IFS=':' read -r proxy _ _ _ _ _ _ <<< "$entry"
   expected=$(echo $stakingConfigs | tr -d '[]' | cut -d',' -f$((i + 1)))
-  stored=$($castCallHeader $externalStakingDistributorProxyAddress "mapStakingProxyConfigs(address)(uint256)" $proxy | awk '{print $1}')
+  # Retry the read: load balanced RPCs can serve a replica that has not yet caught up with the transaction,
+  # which otherwise reports a correctly stored config as a mismatch
+  stored=""
+  for attempt in 1 2 3 4 5; do
+    stored=$($castCallHeader $externalStakingDistributorProxyAddress "mapStakingProxyConfigs(address)(uint256)" $proxy | awk '{print $1}')
+    if [ "$stored" == "$expected" ]; then
+      break
+    fi
+    sleep 3
+  done
   if [ "$stored" != "$expected" ]; then
     echo "${red}!!! $proxy stored config is incorrect!${reset}"
     echo "${red}!!! Fetched:  $stored${reset}"
