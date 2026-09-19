@@ -35,6 +35,7 @@
   "gnosisSafeMultisigImplementationAddress": "0x22bE6fDcd3e29851B29b512F714C328A00A96B83",
   "gnosisSafeSameAddressMultisigImplementationAddress": "0xFbBEc0C8b13B38a9aC0499694A69a10204c5E2aB",
   "safeMultisigWithRecoveryModuleAddress": "0x8c534420Db046d6801A1A8bE6fb602cC8F257453",
+  "recoveryModuleAddress": "0x359d53C326388D24037b3b1590d217fdb5EEE74c",
   "stakingVerifierAddress": "0x10c5525F77F13b28f42c5626240c001c2D57CAd4",
   "stakingFactoryAddress": "0x1cEe30D08943EB58EFF84DD1AB44a6ee6FEff63a",
   "stakingHelperAddress": "0xC6d6b164d81AeE4fCe59D7c74a4e857ac29bc398",

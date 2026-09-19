@@ -292,7 +292,7 @@ describe("Liquid Staking", function () {
         // Initialize stakingManager
         const StakingManagerProxy = await ethers.getContractFactory("Proxy");
         initPayload = stakingManager.interface.encodeFunctionData("initialize", [gnosisSafeMultisig.address,
-            gnosisSafeSameAddressMultisig.address, fallbackHandler.address]);
+            recoveryModule.address, fallbackHandler.address]);
         const stakingManagerProxy = await StakingManagerProxy.deploy(stakingManager.address, initPayload);
         await stakingManagerProxy.deployed();
         stakingManager = await ethers.getContractAt("StakingManager", stakingManagerProxy.address);
