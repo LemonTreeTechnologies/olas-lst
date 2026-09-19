@@ -453,4 +453,50 @@ contract Jinn51c5RewardForkTest is Test {
         vm.prank(agentInstance);
         safe.execTransaction(ROUTER, 2, inner, 0, 0, 0, 0, address(0), payable(address(0)), abi.encodePacked(r, s, v));
     }
+
+    /// @dev A Safe with no native balance cannot do this pool's activity at all.
+    ///
+    /// createRestorationJob is payable and forwards maxDeliveryRate to the marketplace, so the
+    /// SAFE parts with those wei -- not the agent instance that signs, and not the guard. The
+    /// other tests here vm.deal the multisig, which quietly hid the requirement: the first live
+    /// run sent 25 transactions, reverted every one, and credited zero.
+    ///
+    /// This pins the requirement so the suite can never hide it again.
+    function test_51c5_safeWithNoBalanceCannotAct() public {
+        if (_skip()) return;
+        _setUpFork();
+
+        esd.stake(POOL, 0, AGENT_ID, CONFIG_HASH, agentInstance);
+        uint256 serviceId = IRegistryTS(SERVICE_REGISTRY).totalSupply();
+        (address multisig,,,,) = IStakingP(POOL).mapServiceInfo(serviceId);
+
+        bytes memory createData =
+            abi.encodeWithSignature("create(uint256,address,bytes)", serviceId, MECH_FACTORY, abi.encode(uint256(2)));
+        address mech = _safeExecCaptureMech(multisig, createData);
+
+        // Explicitly leave the Safe empty.
+        vm.deal(multisig, 0);
+        assertEq(multisig.balance, 0, "precondition: Safe must be empty");
+
+        uint256 before = IJinnRouter(CHECKER_PROXY).creationCount(multisig);
+
+        bytes memory inner = abi.encodeWithSelector(
+            bytes4(0x6baf28eb), bytes(hex"01"), mech, uint256(2), uint256(300), IMech(mech).paymentType(), bytes("")
+        );
+        ISafeTx safe = ISafeTx(multisig);
+        uint256 n = safe.nonce();
+        bytes32 h = safe.getTransactionHash(ROUTER, 2, inner, 0, 0, 0, 0, address(0), address(0), n);
+        (uint8 v, bytes32 r, bytes32 sg) = vm.sign(agentPk, h);
+        vm.prank(agentInstance);
+        vm.expectRevert(); // GS013: the inner call cannot send value the Safe does not have
+        safe.execTransaction(ROUTER, 2, inner, 0, 0, 0, 0, address(0), payable(address(0)), abi.encodePacked(r, sg, v));
+
+        assertEq(IJinnRouter(CHECKER_PROXY).creationCount(multisig), before, "nothing should be credited");
+
+        // One wei per request is all it takes -- the point is that it must be non-zero.
+        vm.deal(multisig, 2);
+        _createRestorationJobWithMech(multisig, mech);
+        assertEq(IJinnRouter(CHECKER_PROXY).creationCount(multisig), before + 1, "funded Safe should credit");
+        emit log("a Safe needs native for maxDeliveryRate; fund it before sending activity");
+    }
 }
