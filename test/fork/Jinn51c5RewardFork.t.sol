@@ -77,6 +77,10 @@ interface ISafeTx {
     ) external payable returns (bool);
 }
 
+interface IStakingP2 {
+    function tsCheckpoint() external view returns (uint256);
+}
+
 interface IRegistryTS {
     function totalSupply() external view returns (uint256);
 }
@@ -141,7 +145,17 @@ contract Jinn51c5RewardForkTest is Test {
         uint256[] memory configs = new uint256[](1);
         proxies[0] = POOL;
         configs[0] = esd.wrapStakingConfig(
-            address(0), 5000, 0, 5000, ExternalStakingDistributor.StakingType.STAKING_TYPE_OLAS_V1
+            address(0),
+            5000,
+            0,
+            5000,
+            ExternalStakingDistributor.StakingType.STAKING_TYPE_OLAS_V1,
+            // openAccess=TRUE for the test, which stakes as this contract rather than as a
+            // whitelisted curating agent. Since #20 a zero stakingGuard no longer implies open
+            // access -- it must be stated -- so guard 0 + openAccess false now reverts
+            // WrongStakingAccess. Production keeps openAccess FALSE and a real guard, with
+            // agents allowlisted by 03_set_curating_agents.py.
+            true
         );
         esd.setStakingProxyConfigs(proxies, configs);
         vm.stopPrank();
@@ -243,5 +257,100 @@ contract Jinn51c5RewardForkTest is Test {
         );
         assertTrue(abi.decode(ret, (bool)), "one-per-transaction must pass");
         emit log_named_uint("activities required per service per day", need);
+    }
+
+    /// @dev Production readiness: does the LIVE deployed distributor stake, with no upgrade
+    /// applied in the test? If this passes, the on-chain implementation really is the fixed one.
+    function test_liveImplementation_canStake() public {
+        if (_skip()) return;
+        vm.createSelectFork(vm.envString("BASE_RPC_URL"));
+        agentInstance = vm.addr(agentPk);
+        esd = ExternalStakingDistributor(payable(ESD_PROXY));
+
+        emit log_named_address("safeMultisig    ", esd.safeMultisig());
+        emit log_named_address("safeSetupHelper ", esd.safeSetupHelper());
+        assertTrue(esd.safeMultisig() != address(0), "safeMultisig unset -- upgrade not applied");
+        assertTrue(esd.safeSetupHelper() != address(0), "safeSetupHelper unset -- upgrade not applied");
+
+        address esdOwner = esd.owner();
+        vm.startPrank(esdOwner);
+        address[] memory proxies = new address[](1);
+        uint256[] memory configs = new uint256[](1);
+        proxies[0] = POOL;
+        configs[0] = esd.wrapStakingConfig(
+            address(0),
+            5000,
+            0,
+            5000,
+            ExternalStakingDistributor.StakingType.STAKING_TYPE_OLAS_V1,
+            // openAccess=TRUE for the test, which stakes as this contract rather than as a
+            // whitelisted curating agent. Since #20 a zero stakingGuard no longer implies open
+            // access -- it must be stated -- so guard 0 + openAccess false now reverts
+            // WrongStakingAccess. Production keeps openAccess FALSE and a real guard, with
+            // agents allowlisted by 03_set_curating_agents.py.
+            true
+        );
+        esd.setStakingProxyConfigs(proxies, configs);
+        vm.stopPrank();
+
+        deal(OLAS, address(esd), IStakingP(POOL).minStakingDeposit() * 4);
+        uint256 idBefore = IRegistryTS(SERVICE_REGISTRY).totalSupply();
+        esd.stake(POOL, 0, AGENT_ID, CONFIG_HASH, agentInstance);
+        uint256 serviceId = IRegistryTS(SERVICE_REGISTRY).totalSupply();
+        assertEq(serviceId, idBefore + 1, "live implementation did not create a service");
+        (address multisig,,,,) = IStakingP(POOL).mapServiceInfo(serviceId);
+        assertTrue(multisig != address(0), "no multisig");
+        emit log_named_uint("staked serviceId (live impl)", serviceId);
+        emit log_named_address("multisig", multisig);
+    }
+
+    /// @dev Is one activity enough for our FIRST epoch, given the pool has not checkpointed in
+    /// 164 days? The tempting answer is yes: a service's bar is livenessRatio x
+    /// (now - max(tsStart, tsCheckpoint)), and one activity covers 4,339 s.
+    ///
+    /// The catch is that stake() runs _checkpoint() internally, and the pool-level close is
+    /// overdue, so our own stake settles the epoch and moves tsCheckpoint to the stake time.
+    /// From then on the next settlement needs a further livenessPeriod. This test measures
+    /// which of those actually governs, rather than arguing about it.
+    function test_51c5_firstEpoch_howManyActivitiesAreNeeded() public {
+        if (_skip()) return;
+        _setUpFork();
+
+        uint256 tsCpBefore = IStakingP2(POOL).tsCheckpoint();
+        emit log_named_uint("tsCheckpoint before stake", tsCpBefore);
+
+        esd.stake(POOL, 0, AGENT_ID, CONFIG_HASH, agentInstance);
+        uint256 serviceId = IRegistryTS(SERVICE_REGISTRY).totalSupply();
+        (address multisig,, uint256 tsStart,,) = IStakingP(POOL).mapServiceInfo(serviceId);
+
+        uint256 tsCpAfter = IStakingP2(POOL).tsCheckpoint();
+        emit log_named_uint("tsCheckpoint after stake ", tsCpAfter);
+        emit log_named_uint("our tsStart              ", tsStart);
+        if (tsCpAfter > tsCpBefore) {
+            emit log("stake() DID checkpoint: the clock was reset to the stake time");
+        }
+
+        vm.mockCall(MECH_MARKETPLACE, abi.encodeWithSelector(bytes4(0xf6938b09)), abi.encode(bytes32(uint256(1))));
+
+        // One activity, then try to close an hour later.
+        _createRestorationJob(multisig);
+        vm.warp(block.timestamp + 3600);
+        IStakingP(POOL).checkpoint();
+        (,,, uint256 rewardAt1h,) = IStakingP(POOL).mapServiceInfo(serviceId);
+        emit log_named_uint("reward after 1 activity + 1h", rewardAt1h);
+
+        // Now let a full liveness period pass with only that one activity.
+        vm.warp(block.timestamp + IStakingP(POOL).livenessPeriod() + 1);
+        IStakingP(POOL).checkpoint();
+        (,,, uint256 rewardAt24h,) = IStakingP(POOL).mapServiceInfo(serviceId);
+        emit log_named_uint("reward after 1 activity + 24h", rewardAt24h);
+
+        if (rewardAt1h > 0) {
+            emit log("VERDICT: one activity and a short hold is enough");
+        } else if (rewardAt24h > 0) {
+            emit log("VERDICT: the close is gated to 24h, but one activity still cleared the bar");
+        } else {
+            emit log("VERDICT: one activity is NOT enough -- the 24h bar applies, need ~20");
+        }
     }
 }

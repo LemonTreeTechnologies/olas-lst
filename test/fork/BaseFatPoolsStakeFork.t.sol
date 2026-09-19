@@ -99,7 +99,17 @@ contract BaseFatPoolsStakeForkTest is Test {
         proxies[0] = pool;
         // stakingGuard 0 => any caller may stake; factors 5000/0/5000; StakingType.V1 == 1
         configs[0] = esd.wrapStakingConfig(
-            address(0), 5000, 0, 5000, ExternalStakingDistributor.StakingType.STAKING_TYPE_OLAS_V1
+            address(0),
+            5000,
+            0,
+            5000,
+            ExternalStakingDistributor.StakingType.STAKING_TYPE_OLAS_V1,
+            // openAccess=TRUE for the test, which stakes as this contract rather than as a
+            // whitelisted curating agent. Since #20 a zero stakingGuard no longer implies open
+            // access -- it must be stated -- so guard 0 + openAccess false now reverts
+            // WrongStakingAccess. Production keeps openAccess FALSE and a real guard, with
+            // agents allowlisted by 03_set_curating_agents.py.
+            true
         );
         esd.setStakingProxyConfigs(proxies, configs);
     }
