@@ -138,7 +138,7 @@ contract UnstakeExternalRetiredForkTest is Test {
     /// @dev Gnosis leg: distributor -> Collector under UNSTAKE_RETIRED, then relayTokens drains it.
     function test_Gnosis_withdrawRequest_movesOlasToCollectorUnderRetiredOp() public {
         if (_skip("GNOSIS_RPC_URL")) return;
-        vm.createSelectFork(vm.envString("GNOSIS_RPC_URL"));
+        vm.createSelectFork(vm.envString("GNOSIS_RPC_URL"), 48312000);
 
         IExternalStakingDistributor dist = IExternalStakingDistributor(DISTRIBUTOR_GNOSIS);
         address processor = dist.l2StakingProcessor();
