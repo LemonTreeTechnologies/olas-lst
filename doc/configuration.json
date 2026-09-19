@@ -97,7 +97,7 @@
       {
         "name": "StakingManager",
         "artifact": "abis/0.8.30/StakingManager.json",
-        "address": "0x09DF592B2fba0CB859BF01826feA8E96f86E8Ed9"
+        "address": "0xEBd4Be35dC3D6B2abdf2c72f3C2C9f67F848957e"
       },
       {
         "name": "StakingManagerProxy",
@@ -127,7 +127,7 @@
       {
         "name": "ExternalStakingDistributor",
         "artifact": "abis/0.8.30/ExternalStakingDistributor.json",
-        "address": "0x099bd4e8535E58A2A482Ce69278c5E756831d533"
+        "address": "0x31e58449F1643c6B53Dc3d8B055b3e126525e6FC"
       },
       {
         "name": "ExternalStakingDistributorProxy",
@@ -137,12 +137,17 @@
       {
         "name": "MultisigGuard",
         "artifact": "abis/0.8.30/MultisigGuard.json",
-        "address": "0xA26CfDC0e84A04444b6a468c1d1F7191D19541E6"
+        "address": "0xF0a109198822223dB8dd5b6dabd403cB83Ccfe70"
       },
       {
         "name": "MultisigGuardProxy",
         "artifact": "abis/0.8.30/MultisigGuardProxy.json",
         "address": "0xBD645cf2D4F04A1c12B97fe2a8b4A09EF50F1896"
+      },
+      {
+        "name": "SafeSetupHelper",
+        "artifact": "abis/0.8.30/SafeSetupHelper.json",
+        "address": "0xeE908c14318e05D84a954A915870Ae476719656a"
       }
     ]
   },
@@ -173,7 +178,7 @@
       {
         "name": "StakingManager",
         "artifact": "abis/0.8.30/StakingManager.json",
-        "address": "0x327F1da21255d1d02cF2e7155659F8FBf12dB4ee"
+        "address": "0xeB7613bfbb40fab1DA73DC0b1c16Ec13639C305B"
       },
       {
         "name": "StakingManagerProxy",
@@ -203,7 +208,7 @@
       {
         "name": "ExternalStakingDistributor",
         "artifact": "abis/0.8.30/ExternalStakingDistributor.json",
-        "address": "0xDAE0B11e5bF81216283cB95d30039fA3D650eFE3"
+        "address": "0x0a9ab41778F4518b589926e608A4922407b06324"
       },
       {
         "name": "ExternalStakingDistributorProxy",
@@ -213,12 +218,17 @@
       {
         "name": "MultisigGuard",
         "artifact": "abis/0.8.30/MultisigGuard.json",
-        "address": "0x2362FC35f0e8ecA1C1eA8878aC079a518297A373"
+        "address": "0xd3AFDD71BB00112eCAb4baeA74B60C89F5C2a325"
       },
       {
         "name": "MultisigGuardProxy",
         "artifact": "abis/0.8.30/MultisigGuardProxy.json",
         "address": "0x4D3911420a8E4E7dB8c979f4915dA8983C5e3ba2"
+      },
+      {
+        "name": "SafeSetupHelper",
+        "artifact": "abis/0.8.30/SafeSetupHelper.json",
+        "address": "0x709e9010f2cf0aCB41f4Ca574Cd17445Cc03dBD6"
       }
     ]
   }
