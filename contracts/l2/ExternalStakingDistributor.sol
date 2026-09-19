@@ -365,6 +365,13 @@ contract ExternalStakingDistributor is Implementation, ERC721TokenReceiver {
     ///         address(this) as a module for reward distribution, the guard both as a module and as the
     ///         transaction guard, and the recovery module, without which the service could never be unstaked
     ///         and re-deployed later.
+    /// @notice Two alternatives are closed off, hence the helper. safeMultisigWithRecoveryModule cannot be used:
+    ///         it hardcodes the single Safe `setup()` delegatecall to the recovery module's `enableModule()` and
+    ///         accepts only 64 bytes of data (fallbackHandler, nonce), so nothing else can be wired at creation.
+    ///         Pre-creating a Safe owned by address(this), wiring it and swapping the owner to the agent instance
+    ///         afterwards - the previous approach - is also gone: registering that Safe required a same-address
+    ///         multisig implementation, which has been de-whitelisted, and the recovery module explicitly rejects
+    ///         a service whose multisig is still zero, so it cannot stand in for that registration.
     /// @param localGuard Multisig guard address.
     /// @return data Packed Safe multisig creation data.
     function _getMultisigCreationData(address localGuard) internal returns (bytes memory data) {
