@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.30;
 
-import {Test, console} from "forge-std/Test.sol";
+import {Test, console, Vm} from "forge-std/Test.sol";
 import {ExternalStakingDistributor} from "../../contracts/l2/ExternalStakingDistributor.sol";
 import {SafeSetupHelper} from "../../contracts/l2/SafeSetupHelper.sol";
 
@@ -77,6 +77,11 @@ interface ISafeTx {
     ) external payable returns (bool);
 }
 
+interface IMech {
+    function paymentType() external view returns (bytes32);
+    function maxDeliveryRate() external view returns (uint256);
+}
+
 interface IStakingP2 {
     function tsCheckpoint() external view returns (uint256);
 }
@@ -107,6 +112,7 @@ contract Jinn51c5RewardForkTest is Test {
     address constant CHECKER_PROXY = 0x477C41Cccc8bd08027e40CEF80c25918C595a24d;
     address constant ROUTER = 0xfFa7118A3D820cd4E820010837D65FAfF463181B;
     address constant MECH_MARKETPLACE = 0xf24eE42edA0fc9b33B7D41B06Ee8ccD2Ef7C5020;
+    address constant MECH_FACTORY = 0x2E008211f34b25A7d7c102403c6C2C3B665a1abe; // MechFactoryFixedPriceNative
     uint256 constant AGENT_ID = 103;
 
     ExternalStakingDistributor internal esd;
@@ -352,5 +358,99 @@ contract Jinn51c5RewardForkTest is Test {
         } else {
             emit log("VERDICT: one activity is NOT enough -- the 24h bar applies, need ~20");
         }
+    }
+
+    /// @dev The whole same-day path with NO mocks: stake a seat, create our own mech from that
+    /// service's own multisig, then send real createRestorationJob calls through the real
+    /// router into the real Mech Marketplace, and close.
+    ///
+    /// The other tests mock the marketplace's `request`, which leaves open the question this
+    /// one answers: can we go from nothing to earning without waiting on anybody? One mech is
+    /// enough for every service we ever stake here, because this pool counts
+    /// creationCount[requester] -- the mech is only the request target. That is unlike Gnosis
+    /// 0xCAbD0C94, which counts deliveries BY each service's own mech and therefore needs one
+    /// mech per service.
+    function test_51c5_endToEnd_ownMech_noMocks() public {
+        if (_skip()) return;
+        _setUpFork();
+
+        // 1. Stake a seat -- this also mints the service and its Safe.
+        esd.stake(POOL, 0, AGENT_ID, CONFIG_HASH, agentInstance);
+        uint256 serviceId = IRegistryTS(SERVICE_REGISTRY).totalSupply();
+        (address multisig,,,,) = IStakingP(POOL).mapServiceInfo(serviceId);
+        emit log_named_uint("serviceId", serviceId);
+        emit log_named_address("multisig ", multisig);
+
+        // 2. Create our own mech from that multisig, maxDeliveryRate = 2 wei (protocol minimum).
+        bytes memory createData =
+            abi.encodeWithSignature("create(uint256,address,bytes)", serviceId, MECH_FACTORY, abi.encode(uint256(2)));
+        address mech = _safeExecCaptureMech(multisig, createData);
+        emit log_named_address("our mech ", mech);
+        assertTrue(mech != address(0), "mech not created");
+        assertTrue(mech.code.length > 0, "mech has no code");
+
+        // 3. Real activity through the real marketplace -- no vm.mockCall anywhere.
+        uint256[] memory before = IJinnRouter(CHECKER_PROXY).getMultisigNonces(multisig);
+        for (uint256 i = 0; i < 25; ++i) {
+            _createRestorationJobWithMech(multisig, mech);
+        }
+        uint256[] memory afterN = IJinnRouter(CHECKER_PROXY).getMultisigNonces(multisig);
+        emit log_named_uint("safe nonce delta", afterN[0] - before[0]);
+        emit log_named_uint("creation delta  ", afterN[1] - before[1]);
+        assertGe(afterN[1] - before[1], 20, "not enough creations credited");
+        assertLe(afterN[1] - before[1], afterN[0] - before[0], "bound violated");
+
+        // 4. Close and check we were paid.
+        uint256 poolBefore = IStakingP(POOL).availableRewards();
+        vm.warp(block.timestamp + IStakingP(POOL).livenessPeriod() + 1);
+        IStakingP(POOL).checkpoint();
+        (,,, uint256 reward,) = IStakingP(POOL).mapServiceInfo(serviceId);
+        emit log_named_uint("reward credited (wei)", reward);
+        assertGt(reward, 0, "VALUE CAPTURE FAILED: epoch credited zero");
+        assertGt(poolBefore, IStakingP(POOL).availableRewards(), "pool did not pay");
+    }
+
+    /// @dev Run create() through the Safe and pull the mech address out of the emitted event.
+    /// Re-calling create() from the test contract to read its return value does not work: the
+    /// marketplace requires the caller to be the service multisig and reverts
+    /// UnauthorizedAccount, which is what the first version of this test tripped over.
+    function _safeExecCaptureMech(address multisig, bytes memory data) internal returns (address) {
+        ISafeTx safe = ISafeTx(multisig);
+        uint256 n = safe.nonce();
+        bytes32 h = safe.getTransactionHash(MECH_MARKETPLACE, 0, data, 0, 0, 0, 0, address(0), address(0), n);
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(agentPk, h);
+
+        vm.recordLogs();
+        vm.prank(agentInstance);
+        bool ok = safe.execTransaction(
+            MECH_MARKETPLACE, 0, data, 0, 0, 0, 0, address(0), payable(address(0)), abi.encodePacked(r, s, v)
+        );
+        assertTrue(ok, "Safe execTransaction of create() failed");
+
+        // The mech is the first address-shaped topic/word logged by a contract that now has
+        // code and was not there before; CreateMech carries it as the first indexed arg.
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+        for (uint256 i = 0; i < logs.length; ++i) {
+            if (logs[i].topics.length > 1) {
+                address cand = address(uint160(uint256(logs[i].topics[1])));
+                if (cand != address(0) && cand.code.length > 0 && cand != multisig) {
+                    return cand;
+                }
+            }
+        }
+        revert("mech address not found in logs");
+    }
+
+    function _createRestorationJobWithMech(address multisig, address mech) internal {
+        bytes memory inner = abi.encodeWithSelector(
+            bytes4(0x6baf28eb), bytes(hex"01"), mech, uint256(2), uint256(300), IMech(mech).paymentType(), bytes("")
+        );
+        ISafeTx safe = ISafeTx(multisig);
+        uint256 n = safe.nonce();
+        bytes32 h = safe.getTransactionHash(ROUTER, 2, inner, 0, 0, 0, 0, address(0), address(0), n);
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(agentPk, h);
+        vm.deal(multisig, multisig.balance + 1 ether);
+        vm.prank(agentInstance);
+        safe.execTransaction(ROUTER, 2, inner, 0, 0, 0, 0, address(0), payable(address(0)), abi.encodePacked(r, s, v));
     }
 }
