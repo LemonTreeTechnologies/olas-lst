@@ -74,8 +74,31 @@ staking guard **close** on upgrade and must be re-set with the flag in the same 
 | Base | `0x66a92cda5b319dcccac6c1cecbb690ca3fb59488` | 500 / 1000 / 8500 |
 | Base | `0x51c5f4982b9b0b3c0482678f5847ea6228cc8e54` | 500 / 1000 / 8500 |
 
-The exposure window is harmless: creation on Base is blocked until the create-path fix ships anyway, and
-`reStake` keys off `mapServiceIdCuratingAgents`, which this gate does not touch.
+Guard-governed proxies are unaffected either way: the staking hash derivation and the curating-agent
+allowlist are unchanged, so existing entries keep matching.
+
+### Run the config re-set BEFORE the implementation upgrade
+
+There is no need for a window at all. The `openAccess` bit sits above every field the previous
+implementation reads, so that implementation ignores it and behaves exactly as it does today. Verified on a
+Base fork against the deployed distributor: it accepts the flagged config, `unwrapStakingConfig` returns the
+same guard and factors, and a non-owner `stake()` still passes the access gate, failing later at
+`UnauthorizedMultisig`.
+
+So the two steps are independent and can be run in either order, days apart:
+
+```bash
+# chain specific, safe to run at any time, including before the upgrade
+./scripts/deployment/script_l2_10_set_external_staking_configs.sh base_mainnet
+
+# chain agnostic, same call on every chain
+#   deploy the implementation, then changeImplementation on the proxy
+```
+
+Running the config re-set first is preferred, because then no proxy is ever closed.
+
+`reStake` keys off `mapServiceIdCuratingAgents` and `claim` is permissionless, so the eleven services
+already staked on Base keep earning, claiming and re-staking regardless of the order.
 
 ## Pending external reward bucket separation
 
