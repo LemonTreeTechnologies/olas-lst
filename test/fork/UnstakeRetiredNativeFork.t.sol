@@ -174,4 +174,69 @@ contract UnstakeRetiredNativeForkTest is Test {
         assertLt(seatsAfter, seatsBefore, "no seat was released");
         assertGt(opAfter, opBefore, "collector was not credited under UNSTAKE_RETIRED");
     }
+
+    /// @dev Can one transaction drain the whole retired model, or does it take 80?
+    ///
+    /// `unstakeRetired` caps each ENTRY at `stakeLimitPerSlot`, but it re-reads
+    /// `mapStakingModels[id]` from storage on every loop iteration and writes the remainder back
+    /// before the next one. So repeating the same (chainId, stakingProxy) pair N times in the
+    /// arrays should unstake N slots in a single call rather than one.
+    ///
+    /// This matters concretely: the Gnosis native pool holds 80,000 OLAS in 80 slots of 1,000,
+    /// earning nothing (availableRewards and rewardsPerSecond are both 0). 80 transactions
+    /// versus 1 is the difference between a morning of babysitting and a single send.
+    function test_L1_unstakeRetired_sameModelRepeatsInOneCall() public {
+        if (_skip("ETHEREUM_RPC_URL")) return;
+        vm.createSelectFork(vm.envString("ETHEREUM_RPC_URL"));
+
+        IDepositoryN dep = IDepositoryN(DEPOSITORY);
+        uint256 modelId = _modelId(GNOSIS, NATIVE_POOL);
+        (uint96 supply, uint96 remainderBefore, uint96 slot,) = dep.mapStakingModels(modelId);
+        emit log_named_uint("supply    (OLAS)", uint256(supply) / 1e18);
+        emit log_named_uint("remainder (OLAS)", uint256(remainderBefore) / 1e18);
+        emit log_named_uint("slot      (OLAS)", uint256(slot) / 1e18);
+        assertGt(supply, remainderBefore, "model already fully unstaked");
+
+        // Retire it first -- owner-only, and the only privileged step in the whole retirement.
+        uint256[] memory oneChain = new uint256[](1);
+        address[] memory oneProxy = new address[](1);
+        uint8[] memory retired = new uint8[](1);
+        oneChain[0] = GNOSIS;
+        oneProxy[0] = NATIVE_POOL;
+        retired[0] = STATUS_RETIRED;
+        vm.prank(dep.owner());
+        (bool okStatus,) = DEPOSITORY.call(
+            abi.encodeWithSignature("setStakingModelStatuses(uint256[],address[],uint8[])", oneChain, oneProxy, retired)
+        );
+        assertTrue(okStatus, "setStakingModelStatuses failed");
+
+        // Now ask for N slots in ONE call by repeating the same pair.
+        uint256 n = 80;
+        uint256[] memory chainIds = new uint256[](n);
+        address[] memory proxies = new address[](n);
+        bytes[] memory payloads = new bytes[](n);
+        uint256[] memory values = new uint256[](n);
+        for (uint256 i = 0; i < n; ++i) {
+            chainIds[i] = GNOSIS;
+            proxies[i] = NATIVE_POOL;
+            payloads[i] = "";
+            values[i] = 0;
+        }
+
+        // Permissionless: no prank to owner or treasury.
+        vm.prank(address(0xCAFE));
+        uint256[] memory amounts = dep.unstakeRetired(chainIds, proxies, payloads, values);
+
+        uint256 total;
+        for (uint256 i = 0; i < n; ++i) {
+            total += amounts[i];
+        }
+        (, uint96 remainderAfter,,) = dep.mapStakingModels(modelId);
+        emit log_named_uint("slots requested      ", n);
+        emit log_named_uint("total unstaked (OLAS)", total / 1e18);
+        emit log_named_uint("remainder now  (OLAS)", uint256(remainderAfter) / 1e18);
+
+        assertEq(total, uint256(slot) * n, "one call did not drain n slots");
+        assertEq(uint256(remainderAfter) - uint256(remainderBefore), total, "remainder did not advance");
+    }
 }
