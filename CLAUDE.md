@@ -94,7 +94,7 @@ Unstake: Collector (L2) → Bridge → Treasury/UnstakeRelayer (L1) → stOLAS
 
 ## Audit Findings & Resolutions
 
-The project has undergone 9 internal audits (`audits/audit1` through `audits/audit9`) and 1 external audit (CODESPECT).
+The project has undergone 11 internal audits (`audits/audit1` through `audits/audit11`) and 1 external audit (CODESPECT).
 
 ### audit8 (2026-03-08) — all informational, all fixed
 - **INFO-1**: Treasury `requestToWithdraw` didn't forward `msg.value` to unstake calls → Fixed: validates and forwards ETH correctly
@@ -113,6 +113,18 @@ The project has undergone 9 internal audits (`audits/audit1` through `audits/aud
 - **INFO-3**: `claim()` permissionless → By design
 - **INFO-4**: `unstakeRetired()` permissionless → By design
 - **INFO-5**: `LzOracle._lzReceive` trusts LZ Read → By design
+
+### audit10 (2026-05) — post-audit fix review, all 7 fixes verified correct
+Reviewed the audit8 / audit9 remediations on the `post-audit` branch. No new vulnerabilities introduced.
+
+### audit11 (2026-08) — full post-audit re-review, 1 Low, 1 Informational, all resolved
+- **L-1**: External-staking (V1) rewards taxed twice (ESD split + `Collector.protocolFactor` on relay) → Fixed: external rewards top up a dedicated `EXTERNAL_REWARD` Collector bucket, which `relayTokens` does not tax. Was latent — `protocolFactor` is 0 on all live chains
+- **I-1**: `MultisigGuard` does not constrain the service-multisig token balance → Fixed: `checkTransaction` snapshots the balance, `checkAfterExecution` reverts if it decreased
+- **Observations** (`withdrawDelay` config, permissionless `Depository.deposit`, `RequestExecuted(STAKE)` label, `BaseStakingProcessorL2` `extraData`, `StakingTokenLocked` proxy hash) → No contract change; dispositions recorded in `audits/audit11/README.md`
+
+Two defects found while remediating audit11, not in the report itself:
+- **A-1**: `MultisigGuard.checkAfterExecution` took the shared reentrancy lock and returned early without releasing it, with no caller restriction → Fixed: lock released before the early return. Any account could otherwise brick every service multisig on a chain
+- **A-2**: `wrapStakingConfig` packed the staking guard as `uint160(x) << 56`, truncating the address → Fixed: cast to `uint256` before the shift. Live configs were packed off-chain and unaffected
 
 ## Modified Contracts (not yet re-deployed)
 

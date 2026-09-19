@@ -32,6 +32,7 @@ chainId=$(jq -r '.chainId' $globals)
 networkURL=$(jq -r '.networkURL' $globals)
 
 serviceRegistryTokenUtilityAddress=$(jq -r '.serviceRegistryTokenUtilityAddress' $globals)
+olasAddress=$(jq -r '.olasAddress' $globals)
 externalStakingDistributorProxyAddress=$(jq -r '.externalStakingDistributorProxyAddress' $globals)
 
 # Check for Polygon keys only since on other networks those are not needed
@@ -51,7 +52,7 @@ fi
 
 contractName="MultisigGuard"
 contractPath="contracts/l2/$contractName.sol:$contractName"
-constructorArgs="$serviceRegistryTokenUtilityAddress $externalStakingDistributorProxyAddress"
+constructorArgs="$serviceRegistryTokenUtilityAddress $externalStakingDistributorProxyAddress $olasAddress"
 contractArgs="$contractPath --constructor-args $constructorArgs"
 
 # Get deployer based on the ledger flag
@@ -89,7 +90,7 @@ echo "$(jq '. += {"multisigGuardAddress":"'$multisigGuardAddress'"}' $globals)" 
 
 # Verify contract
 if [ "$contractVerification" == "true" ]; then
-  contractParams="$multisigGuardAddress $contractPath --constructor-args $(cast abi-encode "constructor(address,address)" $constructorArgs)"
+  contractParams="$multisigGuardAddress $contractPath --constructor-args $(cast abi-encode "constructor(address,address,address)" $constructorArgs)"
   echo "Verification contract params: $contractParams"
 
   echo "${green}Verifying contract on Etherscan...${reset}"
