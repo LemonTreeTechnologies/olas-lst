@@ -53,10 +53,15 @@ externalStakingDistributorProxyAddress=$(jq -r ".externalStakingDistributorProxy
 configEntries=()
 case "$1" in
   base_mainnet)
-    # Deliberately open proxies: no staking guard, the curating agent takes 85% for running the operation
-    configEntries+=("0x0dfafbf570e9e813507aae18aa08dfba0abc5139:0x0000000000000000000000000000000000000000:500:1000:8500:0:1")
-    configEntries+=("0x66a92cda5b319dcccac6c1cecbb690ca3fb59488:0x0000000000000000000000000000000000000000:500:1000:8500:0:1")
-    configEntries+=("0x51c5f4982b9b0b3c0482678f5847ea6228cc8e54:0x0000000000000000000000000000000000000000:500:1000:8500:0:1")
+    # Closing the last open proxy, and aligning its reward factors with every other Base proxy. Open access
+    # means any account can take a seat the protocol pays the staking deposit for, and the staker both solely
+    # owns the created service multisig and is recorded as the seat's curating agent, so it is granted only
+    # where that is intended. This proxy has no seats taken, so closing it strands nothing.
+    #
+    # The other five configured Base proxies (0x0dfafbf5..., 0x26fa75ef..., 0x51c5f498..., 0xb14cd66c...,
+    # 0xbe6e1236...) are already guard governed with these same factors and are deliberately not re-sent, so
+    # that a run of this script cannot overwrite a correct config.
+    configEntries+=("0x66a92cda5b319dcccac6c1cecbb690ca3fb59488:0x860ffb692ce3b4f2fd24aee9bcc82357f863f88e:1000:0:9000:0:0")
     ;;
   gnosis_mainnet)
     # Guard-governed proxies keep working across the upgrade unchanged, so none are listed by default.
