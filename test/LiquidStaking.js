@@ -1848,15 +1848,25 @@ describe("Liquid Staking", function () {
                 safeContracts.executeTx(multisigV1, txHashData, [signMessageData], 0)
             ).to.be.reverted;
 
-            // Try to disable module
+            // Try to disable module. prev must be the module that points at it in Safe's linked list, which is
+            // the distributor and not the sentinel: with the sentinel Safe reverts on its own for a wrong prev,
+            // which says nothing about whether the guard refuses the transaction
             const sentinelModules = "0x0000000000000000000000000000000000000001";
+            const [enabledModules] = await multisigV1.getModulesPaginated(sentinelModules, 10);
+            const moduleIdx = enabledModules.findIndex(
+                (module) => module.toLowerCase() === recoveryModule.address.toLowerCase());
+            expect(moduleIdx).to.be.greaterThan(-1);
+            const prevModule = moduleIdx === 0 ? sentinelModules : enabledModules[moduleIdx - 1];
             nonce = await multisigV1.nonce();
-            txHashData = await safeContracts.buildContractCall(multisigV1, "disableModule", [sentinelModules,
+            txHashData = await safeContracts.buildContractCall(multisigV1, "disableModule", [prevModule,
                 recoveryModule.address], nonce, 0, 0);
             signMessageData = await safeContracts.safeSignMessage(signers[1], multisigV1, txHashData, 0);
             await expect(
                 safeContracts.executeTx(multisigV1, txHashData, [signMessageData], 0)
             ).to.be.reverted;
+
+            // The recovery module must still be enabled: without it the service deposit could never be returned
+            expect(await multisigV1.isModuleEnabled(recoveryModule.address)).to.equal(true);
 
             // Try to unstake before required staking time is passed
             await expect(

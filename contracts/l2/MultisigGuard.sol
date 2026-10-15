@@ -7,6 +7,9 @@ import {Implementation, ZeroAddress} from "../Implementation.sol";
 interface IExternalStakingDistributor {
     /// @dev Gets service Id by multisig address.
     function mapMultisigServiceIds(address multisig) external view returns (uint256);
+
+    /// @dev Gets recovery module address.
+    function recoveryModule() external view returns (address);
 }
 
 // Generic Safe interface
@@ -27,6 +30,14 @@ interface ISafe {
 
     /// @dev Returns true if module is enabled.
     function isModuleEnabled(address module) external view returns (bool);
+
+    /// @dev Returns an array of modules, and the module the next page starts from.
+    /// @param start Module to start the page from.
+    /// @param pageSize Maximum number of modules to return.
+    function getModulesPaginated(address start, uint256 pageSize)
+        external
+        view
+        returns (address[] memory array, address next);
 }
 
 // Token interface
@@ -86,6 +97,11 @@ error OperatorBalanceSlashed(uint256 serviceId, uint256 provided, uint256 expect
 /// @param expected Minimum expected staking token balance.
 error StakingTokenWithdrawn(address multisig, uint256 provided, uint256 expected);
 
+/// @dev Multisig module set does not match the expected one.
+/// @param multisig Multisig address.
+/// @param numModules Number of enabled modules found.
+error UnexpectedModuleSet(address multisig, uint256 numModules);
+
 /// @dev Caught reentrancy violation.
 error ReentrancyGuard();
 
@@ -95,6 +111,10 @@ contract MultisigGuard is Implementation {
     bytes32 internal constant GUARD_STORAGE_SLOT = 0x4a204f620c8c5ccdca3fd54d003badd85ba500436a431f0cbda4f558c93c34c8;
     // Transient storage seed for per-multisig staking token balances
     bytes32 internal constant STAKING_TOKEN_BALANCE_SEED = keccak256("MultisigGuard.stakingTokenBalance");
+    // Safe module linked list sentinel
+    address internal constant SENTINEL_MODULES = address(0x1);
+    // Number of modules the distributor wires on a service multisig: recovery module, distributor, this guard
+    uint256 internal constant NUM_EXPECTED_MODULES = 3;
 
     // Service registry token utility address
     address public immutable serviceRegistryTokenUtility;
@@ -150,8 +170,23 @@ contract MultisigGuard is Implementation {
         bytes memory,
         address
     ) external {
-        uint256 stakingTokenBalance = IToken(stakingToken).balanceOf(msg.sender);
         bytes32 slot = _stakingTokenBalanceSlot(msg.sender);
+
+        uint256 recorded;
+        // solhint-disable-next-line no-inline-assembly
+        assembly {
+            recorded := tload(slot)
+        }
+
+        // First snapshot in a transaction wins. Nothing stops the multisig from calling back into this function
+        // from inside the very transaction being checked, and a second snapshot would record the balance the
+        // transaction has already moved, making the checkAfterExecution comparison pass against itself
+        if (recorded != 0) {
+            return;
+        }
+
+        // Offset by one, so that a recorded zero balance stays distinguishable from nothing recorded at all
+        uint256 stakingTokenBalance = IToken(stakingToken).balanceOf(msg.sender) + 1;
 
         // Transient storage: the value is only needed until checkAfterExecution later in the same transaction
         // solhint-disable-next-line no-inline-assembly
@@ -178,12 +213,19 @@ contract MultisigGuard is Implementation {
         }
 
         // Check that the staking token was not moved out of the multisig
-        uint256 balanceBefore;
+        uint256 recorded;
         bytes32 slot = _stakingTokenBalanceSlot(msg.sender);
         // solhint-disable-next-line no-inline-assembly
         assembly {
-            balanceBefore := tload(slot)
+            recorded := tload(slot)
         }
+
+        // Zero means checkTransaction never ran for this multisig in this transaction, which Safe always does
+        // before reaching here, so there is no state to compare against and nothing to validate
+        if (recorded == 0) {
+            revert ZeroValue();
+        }
+        uint256 balanceBefore = recorded - 1;
 
         uint256 balanceAfter = IToken(stakingToken).balanceOf(msg.sender);
         if (balanceAfter < balanceBefore) {
@@ -211,7 +253,19 @@ contract MultisigGuard is Implementation {
             revert CallFailed(msg.sender, payload);
         }
 
-        // Check modules
+        // Check modules. The expected set is exactly the three modules the distributor wires at service
+        // creation: the recovery module, the distributor and this guard. The set is checked as a whole, because
+        // asserting only part of it lets a multisig owner drop the rest. Dropping the recovery module in
+        // particular is unrecoverable: unstakeAndWithdraw calls into it, so the service deposit could never be
+        // returned afterwards. The expected addresses are read fresh rather than snapshotted before execution,
+        // which a transaction can tamper with by snapshotting again from inside itself
+        address recoveryModule = IExternalStakingDistributor(externalStakingDistributor).recoveryModule();
+
+        success = ISafe(msg.sender).isModuleEnabled(recoveryModule);
+        if (!success) {
+            revert ModuleDisabled(recoveryModule);
+        }
+
         success = ISafe(msg.sender).isModuleEnabled(externalStakingDistributor);
         if (!success) {
             revert ModuleDisabled(externalStakingDistributor);
@@ -220,6 +274,15 @@ contract MultisigGuard is Implementation {
         success = ISafe(msg.sender).isModuleEnabled(address(this));
         if (!success) {
             revert ModuleDisabled(address(this));
+        }
+
+        // All three expected modules are enabled and distinct, so the only way the set can still differ is by
+        // addition. Safe stops paginating at the sentinel, so asking for exactly three and getting anything
+        // else back as the next entry means a fourth module is enabled
+        (address[] memory modules, address next) =
+            ISafe(msg.sender).getModulesPaginated(SENTINEL_MODULES, NUM_EXPECTED_MODULES);
+        if (modules.length != NUM_EXPECTED_MODULES || next != SENTINEL_MODULES) {
+            revert UnexpectedModuleSet(msg.sender, modules.length);
         }
 
         // Check operator balance
