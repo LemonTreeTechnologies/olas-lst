@@ -126,6 +126,22 @@ Two defects found while remediating audit11, not in the report itself:
 - **A-1**: `MultisigGuard.checkAfterExecution` took the shared reentrancy lock and returned early without releasing it, with no caller restriction → Fixed: lock released before the early return. Any account could otherwise brick every service multisig on a chain
 - **A-2**: `wrapStakingConfig` packed the staking guard as `uint160(x) << 56`, truncating the address → Fixed: cast to `uint256` before the shift. Live configs were packed off-chain and unaffected
 
+### audit12 (2026-10) — delta re-review of the post-audit11 L2 changes, 1 High, resolved
+- **H-1**: `MultisigGuard.checkAfterExecution` asserted only that the distributor and the guard were still
+  enabled modules, never the recovery module, and did not forbid adding modules. Every external staking seat is
+  a service Safe solely owned by the account that staked it, so that owner could drop the recovery module
+  through an ordinary guard-checked transaction; `unstakeAndWithdraw` calls `recoveryModule.recoverAccess`
+  unconditionally, so the seat's protocol-funded deposit could then never be returned, while `claim`/`reStake`
+  kept paying the owner's curating share → Fixed: the complete module set is asserted — the recovery module is
+  read from the distributor and checked with the other two, and `getModulesPaginated` must end at the sentinel
+  so nothing can be added. New `UnexpectedModuleSet` error
+- **H-2** (found while remediating H-1, not in the report): the audit11 I-1 balance snapshot could be re-taken
+  from inside the transaction being checked, by batching a call back into `checkTransaction` after the transfer,
+  so the comparison passed against the already-emptied balance → Fixed: first-write-wins per transaction, stored
+  offset by one so a recorded zero stays distinguishable from nothing recorded
+- **Latent**: the staking-token check is a `balanceOf` snapshot, bypassable via `approve` + `transferFrom`; not
+  reachable while no flow leaves OLAS resting on a service multisig between transactions
+
 ## Modified Contracts (not yet re-deployed)
 
 Contracts that have been modified but not yet re-deployed are tracked in
