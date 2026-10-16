@@ -84,6 +84,11 @@ contract MultisigGuardModuleSetForkTest is Test {
 
     address internal constant SENTINEL_MODULES = address(0x1);
 
+    // The implementation the proxy carried before the module set constraint shipped. Still deployed, so the
+    // test can point the proxy back at it and demonstrate the behaviour the constraint removes, rather than
+    // relying on whatever the proxy happens to carry now
+    address internal constant PREVIOUS_IMPLEMENTATION = 0xd3AFDD71BB00112eCAb4baeA74B60C89F5C2a325;
+
     // The seat's deposit: the pool's minStakingDeposit of 5000 OLAS, for the service and one agent instance
     uint256 internal constant FULL_STAKING_DEPOSIT = 10_000 ether;
 
@@ -174,6 +179,12 @@ contract MultisigGuardModuleSetForkTest is Test {
     ///      the seat's deposit unrecoverable. Asserted so the fix below cannot pass against an already safe state.
     function testLiveGuardLetsRecoveryModuleBeDisabledBeforeUpgrade() public {
         if (!forked) return;
+
+        // Point the proxy at the implementation that predates the constraint. Reading whatever the proxy
+        // currently carries would make this test invert itself the moment the fix is deployed, and it has to
+        // keep demonstrating what the constraint is for
+        vm.prank(GUARD_OWNER);
+        IProxyLive(GUARD_PROXY).changeImplementation(PREVIOUS_IMPLEMENTATION);
 
         bytes memory data =
             abi.encodeWithSignature("disableModule(address,address)", _prevOfModule(RECOVERY_MODULE), RECOVERY_MODULE);
