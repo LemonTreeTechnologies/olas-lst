@@ -53,15 +53,20 @@ externalStakingDistributorProxyAddress=$(jq -r ".externalStakingDistributorProxy
 configEntries=()
 case "$1" in
   base_mainnet)
-    # Closing the last open proxy, and aligning its reward factors with every other Base proxy. Open access
-    # means any account can take a seat the protocol pays the staking deposit for, and the staker both solely
-    # owns the created service multisig and is recorded as the seat's curating agent, so it is granted only
-    # where that is intended. This proxy has no seats taken, so closing it strands nothing.
+    # Every configured Base proxy is listed with its full intended config, including the ones already set, so
+    # that a run from any checkout converges on this state instead of reverting part of it. Re-sending an
+    # unchanged config is a no-op and is reported as already set below.
     #
-    # The other five configured Base proxies (0x0dfafbf5..., 0x26fa75ef..., 0x51c5f498..., 0xb14cd66c...,
-    # 0xbe6e1236...) are already guard governed with these same factors and are deliberately not re-sent, so
-    # that a run of this script cannot overwrite a correct config.
-    configEntries+=("0x66a92cda5b319dcccac6c1cecbb690ca3fb59488:0x860ffb692ce3b4f2fd24aee9bcc82357f863f88e:1000:0:9000:0:0")
+    # All of them are guard governed. Open access means any account can take a seat the protocol pays the
+    # staking deposit for, while solely owning the created service multisig and being recorded as the seat's
+    # curating agent, so it is not granted on a proxy holding protocol capital.
+    stakingGuard="0x860ffb692ce3b4f2fd24aee9bcc82357f863f88e"
+    configEntries+=("0x0dfafbf570e9e813507aae18aa08dfba0abc5139:$stakingGuard:1000:0:9000:0:0")
+    configEntries+=("0x26fa75ef9ccaa60e58260226a71e9d07564c01bf:$stakingGuard:1000:0:9000:0:0")
+    configEntries+=("0x51c5f4982b9b0b3c0482678f5847ea6228cc8e54:$stakingGuard:1000:0:9000:0:0")
+    configEntries+=("0x66a92cda5b319dcccac6c1cecbb690ca3fb59488:$stakingGuard:1000:0:9000:0:0")
+    configEntries+=("0xb14cd66c6c601230ea79fa7cc072e5e0c2f3a756:$stakingGuard:1000:0:9000:0:0")
+    configEntries+=("0xbe6e12364b549622395999db0db53f163994d7af:$stakingGuard:1000:0:9000:0:0")
     ;;
   gnosis_mainnet)
     # Guard-governed proxies keep working across the upgrade unchanged, so none are listed by default.
