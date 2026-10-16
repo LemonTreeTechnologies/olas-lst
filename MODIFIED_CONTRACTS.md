@@ -7,6 +7,13 @@ Keep this list in sync whenever a deployed contract is changed, and clear an ent
 the corresponding contract has been re-deployed and its address updated in
 `doc/configuration.json`.
 
+## Re-deployed — MultisigGuard module set constraint
+
+The `MultisigGuard` module-set constraint has been **re-deployed and its proxies upgraded**, so it is no
+longer pending. The defect, the reasoning, the verification and the deployed addresses are recorded in
+[`audits/audit12/README.md`](audits/audit12/README.md); current addresses live in
+[`doc/configuration.json`](doc/configuration.json).
+
 ## Pending audit8 / audit9 fixes
 
 The following contracts were modified on the `post-audit` branch to address findings from

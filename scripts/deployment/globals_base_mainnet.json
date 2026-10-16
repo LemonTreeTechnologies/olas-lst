@@ -49,7 +49,7 @@
   "stakingManagerProxyAddress": "0xcfA10d192c3999b5CA59aD3c7512c40f1B919e01",
   "externalStakingDistributorAddress": "0x0a9ab41778F4518b589926e608A4922407b06324",
   "externalStakingDistributorProxyAddress": "0x40abf47B926181148000DbCC7c8DE76A3a61a66f",
-  "multisigGuardAddress": "0xd3AFDD71BB00112eCAb4baeA74B60C89F5C2a325",
+  "multisigGuardAddress": "0xb5825653519C350257FcaD6171EFa9E52b0260dc",
   "multisigGuardProxyAddress": "0x4D3911420a8E4E7dB8c979f4915dA8983C5e3ba2",
   "baseDepositProcessorL1Address": "0x87AA04e563110DC484bf1580b16986b34987431e",
   "baseStakingProcessorL2Address": "0xCAF018A23a104095180e298856AC1a415f9831E8",

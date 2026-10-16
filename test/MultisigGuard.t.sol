@@ -10,6 +10,14 @@ import {StakingTokenV1, StakingBaseV1} from "../contracts/test/StakingTokenV1.so
 import {StakingActivityChecker} from "@registries/contracts/staking/StakingActivityChecker.sol";
 import {IService} from "../contracts/interfaces/IService.sol";
 
+interface ISafeModules {
+    function isModuleEnabled(address module) external view returns (bool);
+    function getModulesPaginated(address start, uint256 pageSize)
+        external
+        view
+        returns (address[] memory array, address next);
+}
+
 /// @dev MultisigGuard behaviour on service multisigs.
 ///
 /// The guard is a single proxy shared by every service multisig on the chain, and its reentrancy lock lives in
@@ -20,8 +28,15 @@ import {IService} from "../contracts/interfaces/IService.sol";
 ///
 /// The guard also did not constrain the staking token balance, so a service multisig owner could move out any
 /// OLAS sitting on the Safe through a guard-checked transaction.
+///
+/// It then constrained the balance and two of the three modules, but not the module set as a whole. A multisig
+/// owner could therefore disable the recovery module, which `unstakeAndWithdraw` calls unconditionally, leaving
+/// the service deposit unrecoverable; and the balance constraint itself could be defeated by calling
+/// `checkTransaction` again from inside the transaction being checked, overwriting the snapshot it is compared
+/// against. Both are covered below.
 contract MultisigGuardTest is LiquidStakingBase {
     uint256 internal constant EXTERNAL_LIVENESS_RATIO = 1e12;
+    address internal constant SENTINEL_MODULES = address(0x1);
 
     StakingTokenV1 internal externalStakingProxy;
     address internal curatingAgent;
@@ -124,7 +139,102 @@ contract MultisigGuardTest is LiquidStakingBase {
         assertEq(olas.balanceOf(serviceMultisig), 0, "reward was not distributed off the multisig");
     }
 
+    /// @dev The owner cannot disable the recovery module, with the prev that Safe's linked list actually
+    ///      accepts. The deposit of a service whose recovery module is gone can never be returned.
+    function testOwnerCannotDisableRecoveryModule() public {
+        address recovery = address(recoveryModule);
+        assertTrue(ISafeModules(serviceMultisig).isModuleEnabled(recovery), "recovery not enabled at start");
+
+        // prev is the module that points at the recovery module, which is the distributor, not the sentinel.
+        // Passing the sentinel makes Safe revert on its own with GS103 and proves nothing about the guard
+        bytes memory data = abi.encodeWithSignature(
+            "disableModule(address,address)", _prevOfModule(serviceMultisig, recovery), recovery
+        );
+
+        assertFalse(_execTransaction(serviceMultisig, data, 0), "guard let the recovery module be disabled");
+        assertTrue(ISafeModules(serviceMultisig).isModuleEnabled(recovery), "recovery module was disabled");
+    }
+
+    /// @dev The owner cannot add a module either: a set check that only forbids removals would still let an
+    ///      attacker-controlled module onto the Safe.
+    function testOwnerCannotEnableExtraModule() public {
+        bytes memory data = abi.encodeWithSignature("enableModule(address)", users[7]);
+
+        assertFalse(_execTransaction(serviceMultisig, data, 0), "guard let an extra module be enabled");
+        assertFalse(ISafeModules(serviceMultisig).isModuleEnabled(users[7]), "extra module was enabled");
+    }
+
+    /// @dev The balance snapshot cannot be re-taken from inside the transaction it guards. The batch below
+    ///      moves the staking token out and then calls checkTransaction again, so a last-write-wins snapshot
+    ///      would record the already-emptied balance and compare it against itself.
+    function testOwnerCannotReSnapshotToSweepStakingToken() public {
+        uint256 amount = 100 ether;
+        olas.mint(serviceMultisig, amount);
+
+        bytes memory transferCall = abi.encodeWithSignature("transfer(address,uint256)", users[7], amount);
+        bytes memory reSnapshot = abi.encodeWithSignature(
+            "checkTransaction(address,uint256,bytes,uint8,uint256,uint256,uint256,address,address,bytes,address)",
+            address(0),
+            uint256(0),
+            bytes(""),
+            uint8(0),
+            uint256(0),
+            uint256(0),
+            uint256(0),
+            address(0),
+            address(0),
+            bytes(""),
+            address(0)
+        );
+
+        bytes memory batch =
+            abi.encodePacked(_packedCall(address(olas), transferCall), _packedCall(address(multisigGuard), reSnapshot));
+        bytes memory data = abi.encodeWithSignature("multiSend(bytes)", batch);
+
+        assertFalse(_execDelegateTransaction(address(multiSend), data), "guard let the snapshot be re-taken");
+        assertEq(olas.balanceOf(serviceMultisig), amount, "staking token left the multisig");
+    }
+
     // Helpers
+
+    /// @dev Finds the module that points at the given one in Safe's module linked list.
+    function _prevOfModule(address multisig, address module) internal view returns (address prev) {
+        (address[] memory arr,) = ISafeModules(multisig).getModulesPaginated(SENTINEL_MODULES, 20);
+        prev = SENTINEL_MODULES;
+        for (uint256 i = 0; i < arr.length; ++i) {
+            if (arr[i] == module) {
+                return prev;
+            }
+            prev = arr[i];
+        }
+        revert("module not in list");
+    }
+
+    /// @dev Packs one MultiSend call entry.
+    function _packedCall(address to, bytes memory data) internal pure returns (bytes memory) {
+        return abi.encodePacked(uint8(0), to, uint256(0), data.length, data);
+    }
+
+    /// @dev Executes a delegatecall Safe transaction signed by the multisig owner.
+    function _execDelegateTransaction(address to, bytes memory data) internal returns (bool) {
+        vm.prank(agentInstance);
+        (bool success,) = serviceMultisig.call(
+            abi.encodeWithSignature(
+                "execTransaction(address,uint256,bytes,uint8,uint256,uint256,uint256,address,address,bytes)",
+                to,
+                uint256(0),
+                data,
+                uint8(1),
+                uint256(0),
+                uint256(0),
+                uint256(0),
+                address(0),
+                address(0),
+                abi.encodePacked(bytes32(uint256(uint160(agentInstance))), bytes32(0), uint8(1))
+            )
+        );
+        return success;
+    }
 
     function _execTransaction(address to, bytes memory data, uint256 safeTxGas) internal returns (bool) {
         return _execTransactionFrom(serviceMultisig, agentInstance, to, data, safeTxGas);

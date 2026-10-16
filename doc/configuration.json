@@ -137,7 +137,7 @@
       {
         "name": "MultisigGuard",
         "artifact": "abis/0.8.30/MultisigGuard.json",
-        "address": "0xF0a109198822223dB8dd5b6dabd403cB83Ccfe70"
+        "address": "0x53f6c9E1B9305C89987D3687d7C7fd32d1ea5AC3"
       },
       {
         "name": "MultisigGuardProxy",
@@ -218,7 +218,7 @@
       {
         "name": "MultisigGuard",
         "artifact": "abis/0.8.30/MultisigGuard.json",
-        "address": "0xd3AFDD71BB00112eCAb4baeA74B60C89F5C2a325"
+        "address": "0xb5825653519C350257FcaD6171EFa9E52b0260dc"
       },
       {
         "name": "MultisigGuardProxy",

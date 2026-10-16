@@ -53,7 +53,7 @@
   ],
   "externalStakingDistributorAddress": "0x31e58449F1643c6B53Dc3d8B055b3e126525e6FC",
   "externalStakingDistributorProxyAddress": "0x7E8C636FBD0D9085C112680d8C3fde701452dcb5",
-  "multisigGuardAddress": "0xF0a109198822223dB8dd5b6dabd403cB83Ccfe70",
+  "multisigGuardAddress": "0x53f6c9E1B9305C89987D3687d7C7fd32d1ea5AC3",
   "multisigGuardProxyAddress": "0xBD645cf2D4F04A1c12B97fe2a8b4A09EF50F1896",
   "gnosisDepositProcessorL1Address": "0xeB7613bfbb40fab1DA73DC0b1c16Ec13639C305B",
   "gnosisStakingProcessorL2Address": "0xDAE0B11e5bF81216283cB95d30039fA3D650eFE3",
